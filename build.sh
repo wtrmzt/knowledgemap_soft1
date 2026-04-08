@@ -8,6 +8,8 @@ set -o errexit  # エラーで即終了
 echo "===== 1. フロントエンドのビルド ====="
 cd frontend/knowledge-map-app
 npm install
+# 追加した行
+chmod -R +x ./node_modules/.bin/
 npm run build
 cd ../..
 
