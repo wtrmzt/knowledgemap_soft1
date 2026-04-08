@@ -292,14 +292,6 @@ export function useDashboard() {
           edgesRef.current = ne;
           return ne;
         });
-        loggingService.logActivity(
-          'relation_fetch',
-          {
-            past_count: pastResult ? pastResult.nodes.length : 0,
-            future_count: futureResult ? futureResult.nodes.length : 0,
-          },
-          memoRef.current?.id,
-        );
       }
     } catch (e) {
       console.warn('関連科目取得失敗:', e);

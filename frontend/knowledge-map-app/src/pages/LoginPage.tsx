@@ -79,8 +79,7 @@ const LoginPage: React.FC = () => {
 
           <Button
             onClick={() => handleLogin(userId.trim())}
-            loading={loading}
-            disabled={!userId.trim()}
+            disabled={!userId.trim() || loading}
             className="w-full"
           >
             <LogIn size={15} />
@@ -99,7 +98,7 @@ const LoginPage: React.FC = () => {
           <Button
             variant="secondary"
             onClick={handleDemoLogin}
-            loading={loading}
+            disabled={loading}
             className="w-full"
           >
             <Zap size={15} />

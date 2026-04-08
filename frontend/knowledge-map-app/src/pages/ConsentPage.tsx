@@ -126,8 +126,7 @@ const ConsentPage: React.FC = () => {
 
             <Button
               onClick={handleProceed}
-              disabled={!alreadyConsented && !agreed}
-              loading={loading}
+              disabled={!alreadyConsented && !agreed || loading}
               className="w-full"
             >
               {alreadyConsented ? '同意済み — ダッシュボードへ' : 'システムを利用開始する'}

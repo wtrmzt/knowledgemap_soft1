@@ -94,7 +94,6 @@ export const ReflectionSheet: React.FC<Props> = (props) => {
 
       <div className="flex-1 p-4 overflow-y-auto space-y-3">
         <Textarea
-          ref={taRef}
           value={memoContent}
           onChange={(e) => handleChange(e.target.value)}
           placeholder={PH[mode]}
@@ -104,8 +103,8 @@ export const ReflectionSheet: React.FC<Props> = (props) => {
 
         {phase === 'write' && (
           <Button onClick={() => memoContent.trim() && onGenerateMap(memoContent)}
-            loading={loading} disabled={!memoContent.trim()} className="w-full">
-            <Sparkles size={15} /> マップを生成
+            disabled={!memoContent.trim() || loading} className="w-full">
+            {loading ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />} マップを生成
           </Button>
         )}
 
