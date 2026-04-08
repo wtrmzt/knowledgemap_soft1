@@ -158,8 +158,8 @@ const AdminPage: React.FC = () => {
           </Button>
           <span className="text-sm font-bold font-display text-surface-700">管理者ツール</span>
         </div>
-        <Button variant="secondary" size="sm" onClick={handleExport} loading={exporting}>
-          <Download size={14} />
+        <Button variant="secondary" size="sm" onClick={handleExport} disabled={exporting}>
+          {exporting ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
           CSV/ZIP エクスポート
         </Button>
       </header>
