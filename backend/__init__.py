@@ -25,4 +25,3 @@ def register_all_routes(app: Flask):
     register_relation_routes(app)
     register_log_routes(app)
     register_admin_routes(app)
-    app.register_blueprint(relation_bp)
