@@ -204,7 +204,7 @@ def detect_described_topics(text: str, node_labels: list) -> dict:
         "以下を判定してJSON形式で出力してください:\n"
         '1. "described": 既に記述されている概念のリスト\n'
         '2. "currently_writing": 文末付近で書いている最中の概念（1つ、なければnull）\n'
-        '3. "next_suggestions": まだ記述されていない概念から次に書くとよい概念を最大3つ。\n'
+        '3. "next_suggestions": まだ記述されていない概念から次に書くとよい概念を最大2つ。\n'
         "   各提案: node_label, connector(論理接続詞), prompt_hint(書き出しヒント)\n\n"
         "出力JSON:\n"
         '{"described":["概念A"],"currently_writing":"概念C",'

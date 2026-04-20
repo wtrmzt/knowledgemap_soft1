@@ -8,18 +8,18 @@
  */
 import type { MapNode, MapEdge } from '@/types';
 
-const CENTER_X = 450;
-const CENTER_Y = 320;
-const BASE_RADIUS = 180;
-const MIN_ARC_PX = 160;
+const CENTER_X = 600;
+const CENTER_Y = 400;
+const BASE_RADIUS = 350;
+const MIN_ARC_PX = 300;
 
 // 力学パラメータ
-const SPRING_LENGTH = 180;    // バネの自然長（接続ノード間の理想距離）
-const SPRING_K = 0.05;        // バネ定数
-const REPULSION_K = 8000;     // 斥力定数
-const MIN_DIST = 120;         // ノード間の最小距離（重なり防止）
-const ITERATIONS = 60;        // シミュレーション反復回数
-const DAMPING = 0.85;         // 速度減衰
+const SPRING_LENGTH = 320;    // バネの自然長（接続ノード間の理想距離）
+const SPRING_K = 0.025;       // バネ定数（弱めて広がりやすく）
+const REPULSION_K = 45000;    // 斥力定数（強くして離す）
+const MIN_DIST = 280;         // ノード間の最小距離
+const ITERATIONS = 100;       // シミュレーション反復回数
+const DAMPING = 0.80;         // 速度減衰
 
 export function computeRadialLayout(
   nodes: MapNode[],

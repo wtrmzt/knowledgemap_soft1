@@ -25,16 +25,16 @@ import type {
 // 配置ユーティリティ
 // =============================================
 
-const NODE_W = 160;  // ノードの想定幅
-const NODE_H = 50;   // ノードの想定高さ
+const NODE_W = 230;  // ノードの想定幅（重なり判定用）
+const NODE_H = 90;   // ノードの想定高さ（重なり判定用）
 
-/** satellite を親ノードの上半分（-150°〜-30°）に配置 */
+/** satellite を親ノードの上半分（-160°〜-20°）に配置 */
 function placeSatellitePos(
   parentPos: { x: number; y: number }, count: number, index: number,
 ): { x: number; y: number } {
-  const r = 140;
-  const startDeg = -150;
-  const endDeg = -30;
+  const r = 100;
+  const startDeg = -160;
+  const endDeg = -20;
   const spread = endDeg - startDeg;
   const step = count > 1 ? spread / (count - 1) : 0;
   const deg = startDeg + step * index;
@@ -49,11 +49,11 @@ function placeRelationCandidatePos(
   index: number,
   total: number,
 ): { x: number; y: number } {
-  const r = 220;
+  const r = 350;
   // 過去: 真左（180°）を中心に上下に展開
   // 未来: 真右（0°）を中心に上下に展開
   const centerDeg = direction === 'past' ? 180 : 0;
-  const spread = 40;
+  const spread = 60;
   const offset = total > 1 ? (index - (total - 1) / 2) * (spread / Math.max(total - 1, 1)) : 0;
   const deg = centerDeg + offset;
   const a = (deg * Math.PI) / 180;
@@ -77,16 +77,16 @@ function resolveOverlaps(
   const resolved = newNodes.map((node) => {
     let pos = { ...node.position };
     let attempts = 0;
-    const maxAttempts = 20;
+    const maxAttempts = 30;
 
     while (attempts < maxAttempts) {
       const overlaps = allPositions.some((ep) => isOverlapping(pos, ep));
       if (!overlaps) break;
-      // 放射方向にずらす（中心(0,0)から外側へ）
-      const angle = Math.atan2(pos.y, pos.x);
+      // 放射方向にずらす
+      const angle = Math.atan2(pos.y, pos.x || 0.01);
       pos = {
-        x: pos.x + Math.cos(angle) * 40,
-        y: pos.y + Math.sin(angle) * 40,
+        x: pos.x + Math.cos(angle) * 70,
+        y: pos.y + Math.sin(angle) * 70,
       };
       attempts++;
     }
@@ -140,7 +140,7 @@ function expandSubGraph(
   if (rawNodes.length === 0) return { nodes: [], edges: [] };
 
   const xDir = direction === 'past' ? -1 : 1;
-  const spacing = 170;
+  const spacing = 350;
   const status: NodeStatus = direction === 'past' ? 'relation_past' : 'relation_future';
 
   // ★ 候補ノードの位置を起点に、外側へ直線的に並べる
@@ -149,7 +149,7 @@ function expandSubGraph(
     type: 'custom',
     position: {
       x: candidatePos.x + (i + 1) * spacing * xDir,
-      y: candidatePos.y + (i % 2 === 0 ? 0 : 50) * (i % 4 < 2 ? 1 : -1),
+      y: candidatePos.y + (i % 2 === 0 ? 0 : 70) * (i % 4 < 2 ? 1 : -1),
     },
     data: {
       label: n.label || n.id || '（不明）',
@@ -312,7 +312,7 @@ export function useDashboard() {
           let idx = 0;
           const total = Math.min(groups.size, 3);
           for (const [subjectName, sg] of groups) {
-            if (idx >= 2) break;
+            if (idx >= 3) break;
             const cid = generateId('rpc');
             relationCacheRef.current.set(cid, {
               subjectName, direction: 'past', originNodeId: oId,
@@ -344,9 +344,9 @@ export function useDashboard() {
         if (Array.isArray(futureNodes) && futureNodes.length > 0) {
           const groups = groupBySubject(futureNodes, r.future_map?.edges || []);
           let idx = 0;
-          const total = Math.min(groups.size, 2);
+          const total = Math.min(groups.size, 3);
           for (const [subjectName, sg] of groups) {
-            if (idx >= 2) break;
+            if (idx >= 3) break;
             const cid = generateId('rfc');
             relationCacheRef.current.set(cid, {
               subjectName, direction: 'future', originNodeId: oId,
@@ -485,8 +485,8 @@ export function useDashboard() {
             });
           }
           if (satN.length > 0) {
-            const resolved = resolveOverlaps(satN, nodesRef.current);
-            setNodes((p) => [...p, ...resolved]);
+            // ★ satellite は親ノードに近接配置するため、重なり解消しない
+            setNodes((p) => [...p, ...satN]);
             setEdges((p) => { const ne = [...p, ...satE]; edgesRef.current = ne; return ne; });
           }
         })

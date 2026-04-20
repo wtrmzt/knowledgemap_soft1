@@ -1,3 +1,15 @@
 .env
 .env.*
 !.env.example
+# .gitignore に追記
+backend/.env
+backend/instance/app.db
+# Pythonのキャッシュ
+__pycache__/
+*.pyc
+
+# データベース
+backend/instance/app.db
+
+# 環境変数（今回ブロックされた原因）
+backend/.env
