@@ -1,6 +1,5 @@
 /**
- * 型定義モジュール
- * アプリケーション全体で使用する型を一元管理
+ * 型定義モジュール（Phase 3 v3）
  */
 
 // =============================================
@@ -51,26 +50,26 @@ export type NodeStatus =
   | 'suggested'
   | 'satellite'
   | 'relation_past'
-  | 'relation_future';
+  | 'relation_future'
+  | 'relation_past_candidate'
+  | 'relation_future_candidate';
 
 export interface MapNodeData {
   label: string;
   sentence?: string;
   extend_query?: string;
-  /** ノードの記述状態（振り返りフェーズ用） */
   status?: NodeStatus;
-  /** 周辺概念（satellite）がある場合 */
   satellites?: SatelliteConcept[];
-  /** satellite ノードかどうか */
   isSatellite?: boolean;
-  /** satellite の場合の親ノードID */
   parentNodeId?: string;
-  /** 関連科目ノードかどうか */
+  /** 関連科目ノード（候補 or 展開済み）かどうか */
   isRelation?: boolean;
-  /** 関連科目の方向（過去=基礎 / 未来=発展） */
+  /** 関連科目の方向 */
   relationDirection?: 'past' | 'future';
-  /** 関連科目の起点ノードID（メインマップ上のノード） */
+  /** 接続元のメインノードID */
   relationOriginId?: string;
+  /** 候補ノードの場合: 科目名（キャッシュキー） */
+  relationSubjectName?: string;
   /** 科目グループ名 */
   group?: string;
   [key: string]: unknown;
@@ -92,9 +91,7 @@ export interface MapEdge {
   source: string;
   target: string;
   label?: string;
-  /** satellite 接続用の破線エッジ */
   isSatellite?: boolean;
-  /** 関連科目エッジ */
   isRelation?: boolean;
   sourceHandle?: string;
   targetHandle?: string;
@@ -128,7 +125,6 @@ export interface SatelliteConcept {
   relation: string;
 }
 
-/** APIレスポンス: ノードラベル → 周辺概念リスト */
 export type SurroundingConceptsMap = Record<string, SatelliteConcept[]>;
 
 // =============================================
@@ -165,10 +161,9 @@ export interface ImproveResult {
 }
 
 // =============================================
-// 関連科目推薦（Phase 2/3 対応）
+// 関連科目推薦
 // =============================================
 
-/** 関連科目マップ内のノード */
 export interface RelationMapNode {
   id: string;
   label: string;
@@ -176,19 +171,16 @@ export interface RelationMapNode {
   group?: string;
 }
 
-/** 関連科目マップ内のエッジ */
 export interface RelationMapEdge {
   source: string;
   target: string;
 }
 
-/** 基礎/発展マップ（ノード+エッジのサブグラフ） */
 export interface RelationSubMap {
   nodes: RelationMapNode[];
   edges: RelationMapEdge[];
 }
 
-/** /api/relations/temporal のレスポンス */
 export interface TemporalRelationResponse {
   future_map: RelationSubMap;
   past_map: RelationSubMap;
@@ -197,13 +189,21 @@ export interface TemporalRelationResponse {
   error?: string | null;
 }
 
-/** getTemporalRelations に渡すリクエストデータ */
 export interface TemporalRelationRequest {
   label: string;
   sentence?: string;
   extend_query?: string[];
   year?: number;
   id?: string;
+}
+
+/** キャッシュ: 1科目分のサブグラフ */
+export interface RelationSubGraphCache {
+  subjectName: string;
+  direction: 'past' | 'future';
+  originNodeId: string;
+  nodes: RelationMapNode[];
+  edges: RelationMapEdge[];
 }
 
 /** 旧互換 */

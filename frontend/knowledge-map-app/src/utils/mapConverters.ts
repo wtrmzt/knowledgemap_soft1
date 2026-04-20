@@ -2,9 +2,8 @@
  * MapNode / MapEdge ⇔ React Flow Node / Edge の変換
  *
  * 修正:
- * - ハンドルIDを s-xxx / t-xxx 形式に（CustomNode の dual handle に対応）
- * - 全方向からのエッジ接続が可能
- * - エッジラベルを白背景付きで常時表示
+ * - isRelation ノードの status / data フィールドを保持
+ * - relation エッジのスタイル（過去=青破線、未来=緑破線）
  */
 import type { Node, Edge } from 'reactflow';
 import type { MapNode, MapEdge, NodeStatus, SurroundingConceptsMap } from '@/types';
@@ -24,7 +23,6 @@ const HANDLE_POSITIONS: HandleDef[] = [
   { name: 'top-left',     dx: -NODE_W / 2,  dy: -NODE_H * 0.3 },
 ];
 
-/** 2ノード間で最も近いハンドルペアを返す */
 function findNearestHandles(
   srcPos: { x: number; y: number },
   tgtPos: { x: number; y: number },
@@ -47,7 +45,6 @@ function findNearestHandles(
       }
     }
   }
-  // CustomNode のハンドルIDは s-xxx (source), t-xxx (target)
   return { sourceHandle: `s-${bestSrc}`, targetHandle: `t-${bestTgt}` };
 }
 
@@ -62,6 +59,21 @@ export function toFlowNodes(
   return mapNodes.map((n) => {
     const label = n.label || n.data?.label || n.id;
     const isSat = n.data?.isSatellite ?? false;
+    const isRel = n.data?.isRelation ?? false;
+
+    // ★ status の決定ロジック:
+    //   1. satellite → 'satellite'
+    //   2. relation → ノード自身の status をそのまま保持（topic detection で上書きしない）
+    //   3. 通常ノード → statuses マップから取得
+    let status: NodeStatus;
+    if (isSat) {
+      status = 'satellite';
+    } else if (isRel) {
+      status = n.data?.status || 'default';
+    } else {
+      status = statuses[label] || statuses[n.id] || 'default';
+    }
+
     return {
       id: n.id,
       type: 'custom',
@@ -70,25 +82,30 @@ export function toFlowNodes(
         label,
         sentence: n.sentence || n.data?.sentence || '',
         extend_query: n.extend_query || n.data?.extend_query || '',
-        status: isSat ? 'satellite' : (statuses[label] || statuses[n.id] || 'default'),
+        status,
         isSatellite: isSat,
         parentNodeId: n.data?.parentNodeId || '',
         satellites: [],
+        // ★ 関連科目ノードの全フィールドを保持
+        isRelation: isRel,
+        relationDirection: n.data?.relationDirection,
+        relationOriginId: n.data?.relationOriginId,
+        relationSubjectName: n.data?.relationSubjectName,
+        group: n.data?.group,
       },
     };
   });
 }
 
-/** MapEdge → React Flow Edge（ハンドルは既存値を優先、未設定時のみ計算） */
+/** MapEdge → React Flow Edge */
 export function toFlowEdges(
   mapEdges: MapEdge[],
   nodePositions: Record<string, { x: number; y: number }>,
 ): Edge[] {
   return mapEdges.map((e) => {
     const isSat = e.isSatellite ?? false;
+    const isRel = e.isRelation ?? false;
 
-    // ★ 既にハンドルが割り当てられている場合はそのまま使用
-    //    未設定の場合のみ最近接ハンドルを計算
     let srcHandle = e.sourceHandle;
     let tgtHandle = e.targetHandle;
 
@@ -100,6 +117,17 @@ export function toFlowEdges(
       tgtHandle = nearest.targetHandle;
     }
 
+    // ★ エッジスタイルの決定
+    let edgeStyle: React.CSSProperties;
+    if (isSat) {
+      edgeStyle = { stroke: '#bac8ff', strokeWidth: 1.5, strokeDasharray: '6 4', cursor: 'pointer' };
+    } else if (isRel) {
+      // 関連科目エッジ: source/target の名前からは判別できないので共通色を使用
+      edgeStyle = { stroke: '#a0aec0', strokeWidth: 1.5, strokeDasharray: '5 3', cursor: 'pointer' };
+    } else {
+      edgeStyle = { stroke: '#868e96', strokeWidth: 1.5, cursor: 'pointer' };
+    }
+
     return {
       id: e.id,
       source: e.source,
@@ -107,11 +135,9 @@ export function toFlowEdges(
       sourceHandle: srcHandle,
       targetHandle: tgtHandle,
       label: '',
-      data: { relationLabel: e.label || '' },
+      data: { relationLabel: e.label || '', isRelation: isRel },
       animated: false,
-      style: isSat
-        ? { stroke: '#bac8ff', strokeWidth: 1.5, strokeDasharray: '6 4', cursor: 'pointer' }
-        : { stroke: '#868e96', strokeWidth: 1.5, cursor: 'pointer' },
+      style: edgeStyle,
       interactionWidth: 20,
     };
   });
@@ -130,22 +156,20 @@ export function fromFlowNodes(flowNodes: Node[]): MapNode[] {
   }));
 }
 
-/** React Flow Edge → MapEdge（label は data.relationLabel から復元） */
+/** React Flow Edge → MapEdge */
 export function fromFlowEdges(flowEdges: Edge[]): MapEdge[] {
   return flowEdges.map((e) => ({
     id: e.id,
     source: e.source,
     target: e.target,
     label: (e.data as any)?.relationLabel || (typeof e.label === 'string' ? e.label : ''),
+    isSatellite: e.style?.strokeDasharray === '6 4' ? true : undefined,
+    isRelation: (e.data as any)?.isRelation || false,
     sourceHandle: e.sourceHandle || undefined,
     targetHandle: e.targetHandle || undefined,
   }));
 }
 
-/**
- * 全エッジのハンドルを強制再計算（ドラッグ完了時専用）
- * 既存のハンドル割り当てを無視し、現在のノード位置から最近接ペアを再計算
- */
 export function recalculateEdgeHandles(
   mapEdges: MapEdge[],
   nodePositions: Record<string, { x: number; y: number }>,

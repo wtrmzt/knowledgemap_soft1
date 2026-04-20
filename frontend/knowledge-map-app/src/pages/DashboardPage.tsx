@@ -1,18 +1,26 @@
 /**
- * ダッシュボードページ（Phase 3 v2）
+ * ダッシュボードページ（Phase 3 v3 修正版）
  *
  * 変更点:
- * - RelationPanel を削除（関連科目はマップ上のノードとして自動表示される）
+ * - ヘッダーに学年ドロップダウンを追加
+ * - RelationPanel は廃止（マップ上に直接表示）
  */
 import React from 'react';
-import { History, LogOut, Settings, Save, CheckCircle2 } from 'lucide-react';
+import { History, LogOut, Settings, Save, CheckCircle2, GraduationCap } from 'lucide-react';
 import {
   ModeSwitcher, ReflectionSheet,
   KnowledgeMapDisplay, MapHistoryPanel,
 } from '@/components';
 import { Button } from '@/components/ui';
 import { useDashboard } from '@/hooks/useDashboard';
-import logoIcon from './assets/logo.svg'; // パスは環境に合わせて調整してください
+
+const YEAR_OPTIONS = [
+  { value: 1, label: '1年次' },
+  { value: 2, label: '2年次' },
+  { value: 3, label: '3年次' },
+  { value: 4, label: '4年次' },
+];
+
 const DashboardPage: React.FC = () => {
   const d = useDashboard();
 
@@ -22,12 +30,32 @@ const DashboardPage: React.FC = () => {
       <header className="h-13 shrink-0 flex items-center justify-between px-4 border-b border-surface-200 bg-white">
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-[#f0f0f0] text-white flex items-center justify-center">
-            <img src={logoIcon} className="w-8 h-8" alt="知識マップロゴ" />
+            <div className="w-7 h-7 rounded-lg bg-primary-700 text-white flex items-center justify-center">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="3" /><circle cx="4" cy="8" r="2" /><circle cx="20" cy="8" r="2" />
+                <path d="M6 8h4M14 8h4" />
+              </svg>
             </div>
             <span className="text-sm font-bold font-display text-surface-700">知識マップ</span>
           </div>
+
           <ModeSwitcher mode={d.mode} onChange={d.handleModeChange} />
+
+          {/* ★ 学年ドロップダウン */}
+          <div className="flex items-center gap-1.5 ml-2">
+            <GraduationCap size={14} className="text-surface-400" />
+            <select
+              value={d.selectedYear}
+              onChange={(e) => d.setSelectedYear(Number(e.target.value))}
+              className="text-xs font-medium text-surface-600 bg-surface-50 border border-surface-200 rounded-lg px-2 py-1 cursor-pointer hover:border-surface-300 transition-colors focus:outline-none focus:ring-1 focus:ring-primary-400"
+            >
+              {YEAR_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
 
         <div className="flex items-center gap-2">
@@ -60,7 +88,6 @@ const DashboardPage: React.FC = () => {
 
       {/* ===== Main ===== */}
       <div className="flex-1 flex overflow-hidden">
-        {/* 左: Reflection Sheet (360px) */}
         <aside className="w-[360px] shrink-0 border-r border-surface-200 bg-white overflow-hidden flex flex-col">
           <ReflectionSheet
             phase={d.phase} mode={d.mode}
@@ -77,7 +104,6 @@ const DashboardPage: React.FC = () => {
           />
         </aside>
 
-        {/* 右: Knowledge Map */}
         <main className="flex-1 relative">
           {d.nodes.length === 0 ? (
             <div className="absolute inset-0 flex items-center justify-center">
@@ -101,8 +127,6 @@ const DashboardPage: React.FC = () => {
               onSatelliteAdd={d.handleSatelliteAdd}
             />
           )}
-
-          {/* 関連科目はマップ上のノードとして自動表示されるため、RelationPanel は不要 */}
 
           <MapHistoryPanel memoId={d.currentMemo?.id ?? null}
             visible={d.showHistory} onClose={() => d.setShowHistory(false)}

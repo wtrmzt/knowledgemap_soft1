@@ -39,7 +39,7 @@ class LightweightRelationEngine:
         self._embedding_model = embedding_model
         
         # 設定パラメータ（time_relation_logic.py の Config に対応）
-        self.TOP_K_SUBJECTS = 1
+        self.TOP_K_SUBJECTS = 2 # 過去/未来それぞれの科目数上限
         self.TOP_N_NODES_IN_SUBGRAPH = 5
         self.WEIGHT_GAKUMON_SIM = 0.4
         self.WEIGHT_INPUT_NODE_SIM = 0.6

@@ -30,54 +30,29 @@ body {
 
 /* ===== React Flow overrides ===== */
 
-/* ノード — 一切のレイアウト影響プロパティを排除 */
 .react-flow__node {
-  border: none !important;
-  border-radius: 0 !important;
+  border-radius: 12px !important;
   box-shadow: none !important;
-  outline: none !important;
+  border: none !important;
   padding: 0 !important;
-  margin: 0 !important;
   background: transparent !important;
 }
 
-/* ★ 選択状態でもレイアウト完全同一 */
-.react-flow__node.selected {
-  border: none !important;
-  border-radius: 0 !important;
-  box-shadow: none !important;
-  outline: none !important;
-  padding: 0 !important;
-  margin: 0 !important;
-  background: transparent !important;
-}
-
-/* エッジパス */
 .react-flow__edge-path {
   stroke: #868e96;
   stroke-width: 1.5;
-  cursor: pointer;
-}
-.react-flow__edge {
-  cursor: pointer;
-}
-.react-flow__edge:hover .react-flow__edge-path {
-  stroke: #4263eb;
-  stroke-width: 2.5;
 }
 .react-flow__edge.selected .react-flow__edge-path {
   stroke: var(--color-primary);
   stroke-width: 2;
 }
 
-/* エッジラベルの点滅防止 */
 .react-flow__edge-text,
 .react-flow__edge-textbg {
   transition: none !important;
   animation: none !important;
 }
 
-/* コントロール */
 .react-flow__controls {
   border-radius: var(--radius) !important;
   box-shadow: var(--shadow-sm) !important;
@@ -92,23 +67,17 @@ body {
   pointer-events: auto;
   cursor: default;
 }
-.node-popup-portal * {
-  cursor: auto;
-}
-.node-popup-portal a {
-  cursor: pointer;
-}
-.node-popup-portal button {
-  cursor: pointer;
-}
+.node-popup-portal * { cursor: auto; }
+.node-popup-portal a { cursor: pointer; }
+.node-popup-portal button { cursor: pointer; }
 
-/* Scrollbar */
+/* ===== Scrollbar ===== */
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: #ced4da; border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: #adb5bd; }
 
-/* Animations */
+/* ===== Animations ===== */
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
@@ -124,4 +93,35 @@ body {
 @keyframes popupFadeIn {
   from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+/* ===== ノード浮遊アニメーション ===== */
+@keyframes nodeFloat {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-5px); }
+}
+
+@keyframes nodeFloatSlow {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-3px); }
+}
+
+@keyframes nodeAppear {
+  from { opacity: 0; transform: scale(0.8) translateY(10px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+.node-float {
+  animation: nodeFloat var(--float-duration, 3.5s) ease-in-out infinite;
+  animation-delay: var(--float-delay, 0s);
+}
+
+.node-float-slow {
+  animation: nodeFloatSlow var(--float-duration, 4.5s) ease-in-out infinite;
+  animation-delay: var(--float-delay, 0s);
+}
+
+.node-appear {
+  animation: nodeAppear 0.4s ease-out both;
+  animation-delay: var(--appear-delay, 0s);
 }

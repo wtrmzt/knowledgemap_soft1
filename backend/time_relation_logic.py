@@ -67,7 +67,7 @@ def _load_subjects() -> pd.DataFrame:
 
 
 def find_temporal_relation(
-    concept: str,
+    concept,
     embedding_similarity_fn=None,
     wikidata_similarity_fn=None,
     top_k: int = 3,
@@ -78,7 +78,8 @@ def find_temporal_relation(
     入力概念に対する基礎（過去）科目と発展（未来）科目を提案
 
     Args:
-        concept: 入力概念のキーワード
+        concept: 入力概念のキーワード（str）またはノードデータ（dict）
+                 dict の場合は "label" キーの値を使用する
         embedding_similarity_fn: (concept, subject_keywords) -> float
         wikidata_similarity_fn: (concept, subject_name) -> float
         top_k: 返す科目数
@@ -86,11 +87,28 @@ def find_temporal_relation(
         wikidata_weight: Wikidata類似度の重み
 
     Returns:
-        {"past": [...], "future": [...]} 各要素は {"subject_name", "year", "score"}
+        {
+            "future_map": {"nodes": [...], "edges": []},
+            "past_map":   {"nodes": [...], "edges": []},
+            "method": "heavy",
+        }
     """
+    # dict が渡された場合は label を抽出
+    if isinstance(concept, dict):
+        concept = concept.get("label") or concept.get("sentence") or ""
+
+    concept = str(concept).strip()
+
+    empty = {"future_map": {"nodes": [], "edges": []},
+             "past_map":   {"nodes": [], "edges": []},
+             "method": "heavy"}
+
+    if not concept:
+        return empty
+
     subjects = _load_subjects()
     if subjects.empty:
-        return {"past": [], "future": []}
+        return empty
 
     scores = []
     for _, row in subjects.iterrows():
@@ -122,7 +140,7 @@ def find_temporal_relation(
 
         scores.append({
             "subject_name": subject_name,
-            "year": int(year),
+            "year": int(year) if not (isinstance(year, float) and __import__('math').isnan(year)) else 3,
             "score": round(total_score, 4),
         })
 
@@ -137,7 +155,27 @@ def find_temporal_relation(
         avg_year = 2
 
     # 基礎（年次が小さい）と発展（年次が大きい）に分類
-    past = [s for s in scores if s["year"] < avg_year and s["score"] > 0][:top_k]
-    future = [s for s in scores if s["year"] >= avg_year and s["score"] > 0][:top_k]
+    past_scores = [s for s in scores if s["year"] < avg_year and s["score"] > 0][:top_k]
+    future_scores = [s for s in scores if s["year"] >= avg_year and s["score"] > 0][:top_k]
 
-    return {"past": past, "future": future}
+    def _to_map(items):
+        nodes = [
+            {
+                "id": f"rel_{i}",
+                "label": s["subject_name"],
+                "data": {
+                    "label": s["subject_name"],
+                    "sentence": f"関連度: {s['score']:.2f} / 学年: {s['year']}年",
+                    "year": s["year"],
+                    "score": s["score"],
+                },
+            }
+            for i, s in enumerate(items)
+        ]
+        return {"nodes": nodes, "edges": []}
+
+    return {
+        "future_map": _to_map(future_scores),
+        "past_map":   _to_map(past_scores),
+        "method": "heavy",
+    }

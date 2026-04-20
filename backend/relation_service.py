@@ -184,7 +184,7 @@ class RelationService:
                 has_future = bool(result.get("future_map", {}).get("nodes"))
                 has_past = bool(result.get("past_map", {}).get("nodes"))
 
-                if has_future or has_past or not result.get("error"):
+                if has_future or has_past:
                     logger.info(
                         f"[RelationService] 軽量版で応答 ({elapsed_ms}ms): "
                         f"future={len(result.get('future_map', {}).get('nodes', []))}N, "
@@ -192,7 +192,7 @@ class RelationService:
                     )
                     return result
                 else:
-                    logger.info(f"[RelationService] 軽量版は空結果 → フォールバックへ")
+                    logger.info(f"[RelationService] 軽量版は空結果またはエラー → フォールバックへ")
 
             except Exception as e:
                 logger.error(f"[RelationService] 軽量版でエラー: {e}", exc_info=True)
@@ -201,7 +201,7 @@ class RelationService:
         if self._fallback_enabled and _HEAVY_AVAILABLE:
             try:
                 logger.info("[RelationService] フォールバック版（time_relation_logic）を使用")
-                result = _heavy_find_temporal_relation(input_node_data)
+                result = _heavy_find_temporal_relation(input_node_data)  # dict/str どちらも受け付ける
                 elapsed_ms = int((time.time() - start) * 1000)
                 result["method"] = "heavy"
                 result["response_time_ms"] = elapsed_ms
