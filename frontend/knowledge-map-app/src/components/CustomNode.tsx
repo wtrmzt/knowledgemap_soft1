@@ -1,20 +1,16 @@
 /**
- * カスタムノード（クリック応答改善版）
+ * カスタムノード（クリック応答性 最終版）
  *
- * 修正:
- * - onClick の代わりに onPointerDown/onPointerUp でクリック判定
- *   → React Flow のドラッグ処理と競合しない
- *   → 5px 以内の移動ならクリックとみなす
- * - ポップアップ閉じは Escape キー + 外部クリック（200ms遅延で安全化）
- * - 「過去」「未来」ラベル + 「詳細を表示」ボタン
+ * ポップアップ制御:
+ *   開く: 'node-clicked' イベント（自分のID一致時）
+ *   閉じ: 'node-clicked' 別ノード / 'pane-clicked' / ×ボタン
+ *   ※ document.addEventListener('click') は一切使わない（競合排除）
  */
 import React, { memo, useState, useCallback, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Handle, Position, type NodeProps, useStore } from 'reactflow';
 import { CheckCircle2, Plus, X, Search, ExternalLink, BookOpen, ChevronRight } from 'lucide-react';
 import type { MapNodeData } from '@/types';
-
-const CLICK_THRESHOLD = 5; // px — これ以下の移動はクリックとみなす
 
 const BORDER: Record<string, string> = {
   currently_writing: '#f59f00', described: '#40c057',
@@ -74,67 +70,41 @@ const CustomNode: React.FC<NodeProps<MapNodeData>> = ({ data, selected, id, xPos
   const [popupPos, setPopupPos] = useState<{ x: number; y: number } | null>(null);
   const fp = getFloatParams(id, data);
 
-  // ===== ★ クリック判定（PointerDown → PointerUp の位置差分） =====
-  const pointerDownPos = useRef<{ x: number; y: number } | null>(null);
-  const justOpenedRef = useRef(false);
-
-  const handlePointerDown = useCallback((e: React.PointerEvent) => {
-    pointerDownPos.current = { x: e.clientX, y: e.clientY };
-  }, []);
-
-  const handlePointerUp = useCallback((e: React.PointerEvent) => {
-    if (!pointerDownPos.current) return;
-    const dx = Math.abs(e.clientX - pointerDownPos.current.x);
-    const dy = Math.abs(e.clientY - pointerDownPos.current.y);
-    pointerDownPos.current = null;
-
-    // 閾値以内の移動 → クリックとみなしてポップアップをトグル
-    if (dx < CLICK_THRESHOLD && dy < CLICK_THRESHOLD) {
-      e.stopPropagation();
-      setShowPopup((prev) => {
-        const next = !prev;
-        if (next) justOpenedRef.current = true;
-        return next;
-      });
-    }
-  }, []);
-
-  // ポップアップ位置を計算
+  // ===== ★ ノードクリック: 自分→開く、他→閉じる =====
   useEffect(() => {
-    if (!showPopup || !nodeRef.current) { setPopupPos(null); return; }
+    const handler = (e: Event) => {
+      const clickedId = (e as CustomEvent).detail?.nodeId;
+      if (clickedId === id) {
+        // 自分がクリックされた → 開く（既に開いていたら閉じる）
+        setShowPopup((prev) => {
+          if (!prev && nodeRef.current) {
+            const rect = nodeRef.current.getBoundingClientRect();
+            setPopupPos({ x: rect.left + rect.width / 2, y: rect.bottom + 8 });
+          }
+          return !prev;
+        });
+      } else {
+        // 別のノードがクリックされた → 閉じる
+        setShowPopup(false);
+      }
+    };
+    document.addEventListener('node-clicked', handler);
+    return () => document.removeEventListener('node-clicked', handler);
+  }, [id]);
+
+  // ===== ★ キャンバス背景クリック → 閉じる =====
+  useEffect(() => {
+    const handler = () => setShowPopup(false);
+    document.addEventListener('pane-clicked', handler);
+    return () => document.removeEventListener('pane-clicked', handler);
+  }, []);
+
+  // ポップアップ位置更新（ズーム・パン時）
+  useEffect(() => {
+    if (!showPopup || !nodeRef.current) return;
     const rect = nodeRef.current.getBoundingClientRect();
     setPopupPos({ x: rect.left + rect.width / 2, y: rect.bottom + 8 });
   }, [showPopup, xPos, yPos, transform]);
-
-  // ===== ★ ポップアップ閉じ（外部クリック + Escape） =====
-  useEffect(() => {
-    if (!showPopup) return;
-
-    const closePopup = (e: MouseEvent) => {
-      // ポップアップ自体のクリックは無視
-      const target = e.target as HTMLElement;
-      if (target.closest('.node-popup-portal')) return;
-      // ノード自体のクリックは無視（justOpened 直後のクリック）
-      if (justOpenedRef.current) { justOpenedRef.current = false; return; }
-      setShowPopup(false);
-    };
-
-    const closeOnEsc = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setShowPopup(false);
-    };
-
-    // 200ms 遅延で登録（開いた直後のイベントを拾わないように）
-    const timer = setTimeout(() => {
-      document.addEventListener('pointerdown', closePopup);
-      document.addEventListener('keydown', closeOnEsc);
-    }, 200);
-
-    return () => {
-      clearTimeout(timer);
-      document.removeEventListener('pointerdown', closePopup);
-      document.removeEventListener('keydown', closeOnEsc);
-    };
-  }, [showPopup]);
 
   const handleAddToMap = useCallback(() => {
     setShowPopup(false);
@@ -146,7 +116,6 @@ const CustomNode: React.FC<NodeProps<MapNodeData>> = ({ data, selected, id, xPos
     document.dispatchEvent(new CustomEvent('relation-expand', { detail: { nodeId: id } }));
   }, [id]);
 
-  // ===== スタイル =====
   const isDashed = isSat || isRel;
   const relColor = isPast ? '#4299e1' : '#38b2ac';
   const relTextColor = isPast ? '#2b6cb0' : '#276749';
@@ -158,8 +127,6 @@ const CustomNode: React.FC<NodeProps<MapNodeData>> = ({ data, selected, id, xPos
     <>
       <div
         ref={nodeRef}
-        onPointerDown={handlePointerDown}
-        onPointerUp={handlePointerUp}
         className={isSat || isRel ? 'node-float-slow node-appear' : 'node-float'}
         style={{
           '--float-delay': `${fp.delay}s`,
@@ -183,7 +150,6 @@ const CustomNode: React.FC<NodeProps<MapNodeData>> = ({ data, selected, id, xPos
           </React.Fragment>
         ))}
 
-        {/* 方向タグ（過去/未来） */}
         {(isCandidate || isRelExpanded) && (
           <div style={{ padding: '3px 10px 0', display: 'flex', alignItems: 'center', gap: 4 }}>
             <span style={{
@@ -194,9 +160,7 @@ const CustomNode: React.FC<NodeProps<MapNodeData>> = ({ data, selected, id, xPos
               {dirLabel}
             </span>
             {isRelExpanded && data.group && (
-              <span style={{ fontSize: 9, color: relLightColor, fontWeight: 500 }}>
-                {data.group}
-              </span>
+              <span style={{ fontSize: 9, color: relLightColor, fontWeight: 500 }}>{data.group}</span>
             )}
           </div>
         )}
@@ -229,7 +193,6 @@ const CustomNode: React.FC<NodeProps<MapNodeData>> = ({ data, selected, id, xPos
         )}
       </div>
 
-      {/* ===== ポップアップ ===== */}
       {showPopup && popupPos && createPortal(
         <div
           className="node-popup-portal"
@@ -242,7 +205,7 @@ const CustomNode: React.FC<NodeProps<MapNodeData>> = ({ data, selected, id, xPos
             zIndex: 9999, padding: '14px 16px',
             animation: 'popupFadeIn 0.15s ease-out',
           }}
-          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
         >
           <button
             onClick={() => setShowPopup(false)}
