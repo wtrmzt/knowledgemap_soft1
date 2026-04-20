@@ -2,8 +2,9 @@
 Flask アプリケーション エントリポイント
 """
 import logging
+import os
 
-from flask import Flask, jsonify
+from flask import Flask, send_from_directory
 from flask_cors import CORS
 
 from config import Config
@@ -48,7 +49,24 @@ def create_app():
     # ヘルスチェック
     @app.route('/api/health')
     def health():
-        return jsonify({"status": "ok"})
+        return {'status': 'ok'}
+
+    # ★ 追加: フロントエンド静的ファイルの配信 ★
+    # ビルド済みフロントエンドのパス（Render 上の相対パス）
+    FRONTEND_DIST = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        '..', 'frontend', 'knowledge-map-app', 'dist'
+    )
+
+    @app.route('/', defaults={'path': ''})
+    @app.route('/<path:path>')
+    def serve_frontend(path):
+        # 静的ファイル（JS, CSS, 画像など）が存在すればそれを返す
+        file_path = os.path.join(FRONTEND_DIST, path)
+        if path and os.path.isfile(file_path):
+            return send_from_directory(FRONTEND_DIST, path)
+        # それ以外は index.html を返す（React Router の SPA ルーティング用）
+        return send_from_directory(FRONTEND_DIST, 'index.html')
 
     return app
 

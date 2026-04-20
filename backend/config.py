@@ -40,12 +40,12 @@ class Config:
     # ★ from_object() で読み込まれるよう、クラス属性として SQLALCHEMY_DATABASE_URI を定義
     SQLALCHEMY_DATABASE_URI = None  # __init_subclass__ より前に定義が必要なのでプレースホルダ
 
+    # ★ 追加: コネクションプールの安定化 ★
     SQLALCHEMY_ENGINE_OPTIONS = {
-        "pool_pre_ping": True,       # 使用前に接続の生存を確認する
-        "pool_recycle": 300,         # 300秒(5分)ごとに接続をリサイクル
-        "pool_size": 5,              # プールの基本接続数
-        "max_overflow": 10,          # 基本を超えて作れる一時接続の上限
-        "pool_timeout": 30,          # 接続取得の待ち時間(秒)
+        "pool_pre_ping": True,   # 接続使用前に生存確認（SELECT 1）
+        "pool_recycle": 280,     # 280秒ごとに接続をリサイクル（Render の切断より短く）
+        "pool_size": 5,          # 基本プールサイズ
+        "max_overflow": 10,      # ピーク時の追加接続上限
     }
     # --- 関連科目推薦（Phase 2） ---
     PRECOMPUTED_DATA_PATH = os.environ.get(
