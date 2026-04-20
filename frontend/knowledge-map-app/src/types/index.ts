@@ -234,3 +234,17 @@ export interface AdminStats {
 // =============================================
 
 export type ReflectionPhase = 'write' | 'revise';
+
+// =============================================
+// ロギング
+// =============================================
+
+export type LogAction =
+  | 'map_generate'
+  | 'mode_switch'
+  | 'node_add'
+  | 'node_connect'
+  | 'satellite_add'
+  | 'relation_expanded'
+  | 'map_rollback'
+  | 'map_autosave';

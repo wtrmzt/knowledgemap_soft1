@@ -14,7 +14,8 @@ export type LogAction =
   | 'memo_create'
   | 'memo_improve'
   | 'mode_switch'
-  | 'relation_view';
+  | 'relation_view'
+  | 'relation_expanded';
 
 export async function logActivity(
   action: LogAction,
