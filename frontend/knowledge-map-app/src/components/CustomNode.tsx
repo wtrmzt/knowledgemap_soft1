@@ -57,6 +57,7 @@ function getFloatParams(id: string, data: MapNodeData) {
 const CustomNode: React.FC<NodeProps<MapNodeData>> = ({ data, selected, id, xPos, yPos }) => {
   const [showPopup, setShowPopup] = useState(false);
   const nodeRef = useRef<HTMLDivElement>(null);
+  const pointerDownPos = useRef<{ x: number; y: number } | null>(null);
   const status = data.status || 'default';
   const isSat = data.isSatellite ?? false;
   const isRel = data.isRelation ?? false;
@@ -69,6 +70,27 @@ const CustomNode: React.FC<NodeProps<MapNodeData>> = ({ data, selected, id, xPos
   const transform = useStore((s) => s.transform);
   const [popupPos, setPopupPos] = useState<{ x: number; y: number } | null>(null);
   const fp = getFloatParams(id, data);
+
+  // ===== ★ 自前クリック検知（React Flow の onNodeClick に依存しない） =====
+  const handlePointerDown = useCallback((e: React.PointerEvent) => {
+    pointerDownPos.current = { x: e.clientX, y: e.clientY };
+  }, []);
+
+  const handlePointerUp = useCallback((e: React.PointerEvent) => {
+    if (!pointerDownPos.current) return;
+    const dx = e.clientX - pointerDownPos.current.x;
+    const dy = e.clientY - pointerDownPos.current.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    pointerDownPos.current = null;
+
+    // 移動量が 5px 以内ならクリックと判定（ドラッグではない）
+    if (dist < 5) {
+      // 他ノードのポップアップを閉じるために node-clicked を発火
+      document.dispatchEvent(
+        new CustomEvent('node-clicked', { detail: { nodeId: id } })
+      );
+    }
+  }, [id]);
 
   // ===== ★ ノードクリック: 自分→開く、他→閉じる =====
   useEffect(() => {
@@ -127,6 +149,8 @@ const CustomNode: React.FC<NodeProps<MapNodeData>> = ({ data, selected, id, xPos
     <>
       <div
         ref={nodeRef}
+        onPointerDown={handlePointerDown}
+        onPointerUp={handlePointerUp}
         className={isSat || isRel ? 'node-float-slow node-appear' : 'node-float'}
         style={{
           '--float-delay': `${fp.delay}s`,

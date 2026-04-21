@@ -152,13 +152,6 @@ export const KnowledgeMapDisplay: React.FC<Props> = ({
     if (pendingConn) handleLabelConfirm('');
   }, [pendingConn, handleLabelConfirm]);
 
-  // ===== ノードクリック → CustomEvent で通知 =====
-  const handleNodeClick = useCallback((_: any, node: Node) => {
-    document.dispatchEvent(
-      new CustomEvent('node-clicked', { detail: { nodeId: node.id } })
-    );
-  }, []);
-
   // ===== キャンバス背景クリック → ポップアップを閉じる =====
   const handlePaneClick = useCallback(() => {
     document.dispatchEvent(new CustomEvent('pane-clicked'));
@@ -172,7 +165,6 @@ export const KnowledgeMapDisplay: React.FC<Props> = ({
         onEdgesChange={handleEChange}
         onConnect={handleConnect}
         onNodeDragStop={handleNodeDragStop}
-        onNodeClick={handleNodeClick}
         onPaneClick={handlePaneClick}
         nodeTypes={nodeTypes}
         fitView fitViewOptions={{ padding: 0.3 }}

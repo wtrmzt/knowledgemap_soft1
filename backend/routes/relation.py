@@ -1,22 +1,24 @@
 """
 routes/relation.py — 関連科目推薦 API ルート
 
-修正:
-  - year の NaN/None を安全にサニタイズ
-  - レスポンス形式を正規化（heavy版の不足フィールドを補完）
-  - ノードの NaN 値を None に変換
+time_relation_logic.py を直接呼び出す。
+3指標統合（QID path + Jaccard + cosine embedding）で高精度な推薦を行う。
 """
 
 import math
-import numpy as np
-from flask import Blueprint, request, jsonify, current_app
-from auth import token_required
 import logging
+import numpy as np
+from flask import Blueprint, request, jsonify
+from auth import token_required
 
 logger = logging.getLogger(__name__)
 
 relation_bp = Blueprint("relation", __name__)
 
+
+# =============================================
+# ユーティリティ
+# =============================================
 
 def _safe_year(value, default=3) -> int:
     """year 値を安全に int に変換"""
@@ -33,27 +35,29 @@ def _safe_year(value, default=3) -> int:
         return default
 
 
+def _sanitize_value(v):
+    """JSON非対応の値を安全に変換"""
+    if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
+        return None
+    if isinstance(v, (set, frozenset)):
+        return list(v)
+    if isinstance(v, np.ndarray):
+        return None  # embedding は除外
+    if isinstance(v, (np.integer,)):
+        return int(v)
+    if isinstance(v, (np.floating,)):
+        f = float(v)
+        return None if math.isnan(f) else f
+    return v
+
+
 def _sanitize_node(node: dict) -> dict:
-    """ノード辞書内の NaN / set / numpy 値を JSON 安全な値に変換"""
-    clean = {}
-    for k, v in node.items():
-        if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
-            clean[k] = None
-        elif isinstance(v, (set, frozenset)):
-            clean[k] = list(v)
-        elif isinstance(v, np.ndarray):
-            continue  # embedding は除外
-        elif isinstance(v, np.integer):
-            clean[k] = int(v)
-        elif isinstance(v, np.floating):
-            clean[k] = None if math.isnan(float(v)) else float(v)
-        else:
-            clean[k] = v
-    return clean
+    """ノード辞書内の NaN / set / numpy 値をJSON安全に変換"""
+    return {k: _sanitize_value(v) for k, v in node.items()}
 
 
 def _normalize_response(result: dict) -> dict:
-    """レスポンスを正規化: ノードの NaN 除去 + 必須フィールド補完"""
+    """レスポンスを正規化"""
     for key in ['future_map', 'past_map']:
         if key not in result:
             result[key] = {"nodes": [], "edges": []}
@@ -62,26 +66,34 @@ def _normalize_response(result: dict) -> dict:
             if not isinstance(sub, dict):
                 result[key] = {"nodes": [], "edges": []}
                 continue
-            # ノードをサニタイズ
             raw_nodes = sub.get("nodes", [])
             if isinstance(raw_nodes, list):
                 sub["nodes"] = [_sanitize_node(n) if isinstance(n, dict) else n for n in raw_nodes]
             else:
                 sub["nodes"] = []
-            # エッジ
             if not isinstance(sub.get("edges"), list):
                 sub["edges"] = []
 
-    # method がなければ追加
     if "method" not in result:
-        result["method"] = "heavy_direct"
+        result["method"] = "heavy"
 
     return result
 
 
+# =============================================
+# エンドポイント
+# =============================================
+
 @relation_bp.route("/api/relations/temporal", methods=["POST"])
 @token_required
 def get_temporal_relations():
+    """
+    ノードに関連する基礎/発展科目を返す。
+    3指標統合（QID path + Jaccard + cosine）で推薦。
+
+    Request Body:
+        { "label": "動的計画法", "sentence": "...", "year": 3, "id": "node_xxx" }
+    """
     data = request.get_json()
 
     if not data:
@@ -100,59 +112,36 @@ def get_temporal_relations():
         "apiNodeId": data.get("apiNodeId"),
     }
 
-    service = getattr(current_app, "relation_service", None)
-
-    if service:
-        result = service.find_temporal_relation(node_data)
-    else:
-        result = _direct_fallback(node_data)
-
-    # ★ レスポンスを正規化してから返す
-    result = _normalize_response(result)
-    return jsonify(result)
+    try:
+        from time_relation_logic import find_temporal_relation
+        result = find_temporal_relation(node_data)
+        result = _normalize_response(result)
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"関連科目推薦エラー: {e}", exc_info=True)
+        return jsonify({
+            "future_map": {"nodes": [], "edges": []},
+            "past_map": {"nodes": [], "edges": []},
+            "method": "heavy",
+            "error": str(e),
+        })
 
 
 @relation_bp.route("/api/relations/status", methods=["GET"])
 @token_required
 def get_relation_status():
-    service = getattr(current_app, "relation_service", None)
-
-    if service:
-        return jsonify(service.get_status())
-    else:
-        return jsonify({
-            "initialized": False,
-            "note": "relation_service.py 未配置。time_relation_logic.py でフォールバック中。",
-        })
+    """エンジンの状態"""
+    return jsonify({
+        "engine": "time_relation_logic (3指標統合)",
+        "weights": {
+            "rep_path": 0.4,
+            "neighbor_jaccard": 0.3,
+            "embedding_cosine": 0.3,
+        },
+        "top_k_subjects": 3,
+    })
 
 
 def register_relation_routes(app):
     """routes/__init__.py から呼ばれる登録関数"""
     app.register_blueprint(relation_bp)
-
-
-def _direct_fallback(node_data: dict) -> dict:
-    """time_relation_logic.py を直接呼ぶフォールバック"""
-    try:
-        node_data["year"] = _safe_year(node_data.get("year"), 3)
-
-        from time_relation_logic import find_temporal_relation
-        result = find_temporal_relation(node_data)
-        result["method"] = "heavy_direct"
-        return result
-    except ImportError:
-        logger.error("time_relation_logic モジュールが見つかりません")
-        return {
-            "future_map": {"nodes": [], "edges": []},
-            "past_map": {"nodes": [], "edges": []},
-            "method": "none",
-            "error": "関連科目推薦モジュールが利用できません。",
-        }
-    except Exception as e:
-        logger.error(f"フォールバックエラー: {e}", exc_info=True)
-        return {
-            "future_map": {"nodes": [], "edges": []},
-            "past_map": {"nodes": [], "edges": []},
-            "method": "none",
-            "error": str(e),
-        }
