@@ -14,10 +14,10 @@ from routes import register_all_routes
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# フロントエンドビルド出力ディレクトリ
+# フロントエンドビルド出力ディレクトリ（build.sh が backend/static にコピー済み）
 FRONTEND_DIST = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
-    '..', 'frontend', 'knowledge-map-app', 'dist',
+    'static',
 )
 
 

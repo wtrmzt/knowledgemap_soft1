@@ -20,5 +20,6 @@ cp -r frontend/knowledge-map-app/dist backend/static
 echo "===== 3. バックエンドの依存関係インストール ====="
 cd backend
 pip install -r requirements.txt
+python -m spacy download ja_core_news_sm
 
 echo "===== ビルド完了 ====="
