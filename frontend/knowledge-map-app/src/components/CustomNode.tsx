@@ -1,10 +1,10 @@
 /**
- * カスタムノード（クリック応答性 最終版）
+ * カスタムノード
  *
- * ポップアップ制御:
- *   開く: 'node-clicked' イベント（自分のID一致時）
- *   閉じ: 'node-clicked' 別ノード / 'pane-clicked' / ×ボタン
- *   ※ document.addEventListener('click') は一切使わない（競合排除）
+ * 操作モデル:
+ *   左クリック  → ポップアップ表示/非表示（node-clicked イベント）
+ *   中央クリック → ノードのドラッグ移動（node-middle-down イベント → KnowledgeMapDisplay が処理）
+ *   React Flow の左クリックドラッグは nodesDraggable={false} で無効化済み
  */
 import React, { memo, useState, useCallback, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
@@ -57,7 +57,6 @@ function getFloatParams(id: string, data: MapNodeData) {
 const CustomNode: React.FC<NodeProps<MapNodeData>> = ({ data, selected, id, xPos, yPos }) => {
   const [showPopup, setShowPopup] = useState(false);
   const nodeRef = useRef<HTMLDivElement>(null);
-  const downRef = useRef<{ x: number; y: number; t: number } | null>(null);
   const status = data.status || 'default';
   const isSat = data.isSatellite ?? false;
   const isRel = data.isRelation ?? false;
@@ -71,34 +70,26 @@ const CustomNode: React.FC<NodeProps<MapNodeData>> = ({ data, selected, id, xPos
   const [popupPos, setPopupPos] = useState<{ x: number; y: number } | null>(null);
   const fp = getFloatParams(id, data);
 
-  // ===== ★ 自前クリック検知 =====
-  // mousedown で座標+時刻を記録し、document レベルの mouseup で判定。
-  // React Flow がポインターイベントを横取りしても mouseup は確実に届く。
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    downRef.current = { x: e.clientX, y: e.clientY, t: Date.now() };
-  }, []);
-
-  useEffect(() => {
-    const handleMouseUp = (e: MouseEvent) => {
-      const d = downRef.current;
-      downRef.current = null;
-      if (!d) return;
-
-      const dx = e.clientX - d.x;
-      const dy = e.clientY - d.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      const elapsed = Date.now() - d.t;
-
-      // 移動 8px 以内 かつ 500ms 以内 → クリックと判定
-      if (dist < 8 && elapsed < 500) {
-        document.dispatchEvent(
-          new CustomEvent('node-clicked', { detail: { nodeId: id } })
-        );
-      }
-    };
-    document.addEventListener('mouseup', handleMouseUp);
-    return () => document.removeEventListener('mouseup', handleMouseUp);
+  // ===== ★ 左クリック → ポップアップ =====
+  // nodesDraggable={false} によりドラッグ干渉がないため onClick で確実に反応する
+  const handleClick = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    document.dispatchEvent(
+      new CustomEvent('node-clicked', { detail: { nodeId: id } })
+    );
   }, [id]);
+
+  // ===== ★ 中央クリック → ドラッグ開始イベントを発火 =====
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    if (e.button !== 1) return;          // 中央ボタンのみ
+    e.preventDefault();                   // ブラウザの自動スクロールを防止
+    e.stopPropagation();
+    document.dispatchEvent(
+      new CustomEvent('node-middle-down', {
+        detail: { nodeId: id, clientX: e.clientX, clientY: e.clientY, zoom: transform[2] },
+      })
+    );
+  }, [id, transform]);
 
   // ===== ★ ノードクリック: 自分→開く、他→閉じる =====
   useEffect(() => {
@@ -155,6 +146,7 @@ const CustomNode: React.FC<NodeProps<MapNodeData>> = ({ data, selected, id, xPos
     <>
       <div
         ref={nodeRef}
+        onClick={handleClick}
         onMouseDown={handleMouseDown}
         className={isSat || isRel ? 'node-float-slow node-appear' : 'node-float'}
         style={{

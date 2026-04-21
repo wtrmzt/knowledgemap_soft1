@@ -1,10 +1,10 @@
 /**
  * 知識マップ表示コンポーネント
  *
- * 修正:
- * - エッジのハンドル再計算を onNodeDragStop のみに限定（点滅防止）
- * - 通常の onNodesChange ではエッジに触れない
- * - 手動エッジは flowEdges + mapEdges の両方に確実に追加
+ * 操作モデル:
+ *   左クリック   → ポップアップ（CustomNode 側で処理）
+ *   中央クリック → ノードのドラッグ移動（node-middle-down イベントを受けて本コンポーネントで処理）
+ *   nodesDraggable={false} で React Flow の左クリックドラッグを無効化
  */
 import React, { useCallback, useRef, useEffect, useMemo, useState } from 'react';
 import ReactFlow, {
@@ -88,10 +88,9 @@ export const KnowledgeMapDisplay: React.FC<Props> = ({
     timerRef.current = setTimeout(onAutoSave, 3000);
   }, [onAutoSave]);
 
-  // ===== ノード変更（ドラッグ中） — エッジに触れない =====
+  // ===== ノード変更（選択変更等） =====
   const handleNChange = useCallback((c: any) => {
     onNChange(c);
-    // ★ ノード位置だけ親に同期。エッジは触らない（点滅防止）
     setTimeout(() => {
       setFlowNodes((nds) => {
         setMapNodes(fromFlowNodes(nds));
@@ -100,15 +99,70 @@ export const KnowledgeMapDisplay: React.FC<Props> = ({
     }, 0);
   }, [onNChange, setFlowNodes, setMapNodes]);
 
-  // ===== ドラッグ完了時にエッジのハンドルを再計算 =====
-  const handleNodeDragStop = useCallback((_: any, __: any, nodes: Node[]) => {
-    const pm = buildPosMap(nodes);
-    setFlowEdges((eds) => {
-      const mapE = fromFlowEdges(eds);
-      return toFlowEdges(mapE, pm);
-    });
-    schedule();
-  }, [setFlowEdges, schedule]);
+  // ===== ★ 中央クリック ドラッグ処理 =====
+  const flowNodesRef = useRef(flowNodes);
+  useEffect(() => { flowNodesRef.current = flowNodes; }, [flowNodes]);
+
+  const dragRef = useRef<{
+    nodeId: string; startX: number; startY: number;
+    startNodeX: number; startNodeY: number; zoom: number;
+  } | null>(null);
+
+  useEffect(() => {
+    const handleDown = (e: Event) => {
+      const d = (e as CustomEvent).detail;
+      const node = flowNodesRef.current.find((n: Node) => n.id === d.nodeId);
+      if (!node) return;
+      dragRef.current = {
+        nodeId: d.nodeId,
+        startX: d.clientX, startY: d.clientY,
+        startNodeX: node.position.x, startNodeY: node.position.y,
+        zoom: d.zoom || 1,
+      };
+      document.body.style.cursor = 'grabbing';
+    };
+
+    const handleMove = (e: MouseEvent) => {
+      if (!dragRef.current) return;
+      e.preventDefault();
+      const { nodeId, startX, startY, startNodeX, startNodeY, zoom } = dragRef.current;
+      const dx = (e.clientX - startX) / zoom;
+      const dy = (e.clientY - startY) / zoom;
+      setFlowNodes((nds) =>
+        nds.map((n) =>
+          n.id === nodeId
+            ? { ...n, position: { x: startNodeX + dx, y: startNodeY + dy } }
+            : n
+        )
+      );
+    };
+
+    const handleUp = () => {
+      if (!dragRef.current) return;
+      dragRef.current = null;
+      document.body.style.cursor = '';
+      // 位置を親に同期 + エッジハンドル再計算 + 自動保存
+      setFlowNodes((nds) => {
+        setMapNodes(fromFlowNodes(nds));
+        const pm = buildPosMap(nds);
+        setFlowEdges((eds) => {
+          const mapE = fromFlowEdges(eds);
+          return toFlowEdges(mapE, pm);
+        });
+        return nds;
+      });
+      schedule();
+    };
+
+    document.addEventListener('node-middle-down', handleDown);
+    document.addEventListener('mousemove', handleMove);
+    document.addEventListener('mouseup', handleUp);
+    return () => {
+      document.removeEventListener('node-middle-down', handleDown);
+      document.removeEventListener('mousemove', handleMove);
+      document.removeEventListener('mouseup', handleUp);
+    };
+  }, [setFlowNodes, setFlowEdges, setMapNodes, schedule]);
 
   const handleEChange = useCallback((c: any) => {
     onEChange(c);
@@ -164,8 +218,8 @@ export const KnowledgeMapDisplay: React.FC<Props> = ({
         onNodesChange={handleNChange}
         onEdgesChange={handleEChange}
         onConnect={handleConnect}
-        onNodeDragStop={handleNodeDragStop}
         onPaneClick={handlePaneClick}
+        nodesDraggable={false}
         nodeTypes={nodeTypes}
         fitView fitViewOptions={{ padding: 0.3 }}
         minZoom={0.2} maxZoom={2}
