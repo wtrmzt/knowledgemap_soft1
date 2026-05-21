@@ -21,7 +21,7 @@ const VITE_GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | 
 const VITE_GOOGLE_ALLOWED_HD = import.meta.env.VITE_GOOGLE_ALLOWED_HD as string | undefined;
 
 // 動的インポート: @react-oauth/google 未インストールでも落ちないように
-const LazyGoogleButton = lazy(async () => {
+const LazyGoogleButton = lazy<React.ComponentType<any>>(async () => {
   try {
     const mod = await import('@react-oauth/google');
     return {

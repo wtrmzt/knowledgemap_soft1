@@ -154,7 +154,7 @@ const MapsListPage: React.FC = () => {
           <div className="mt-8 flex justify-center">
             <Button
               variant="secondary"
-              loading={loading}
+              disabled={loading}
               onClick={() => void fetchPage(page + 1, false)}
             >
               もっと見る
