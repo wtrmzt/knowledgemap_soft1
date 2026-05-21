@@ -82,7 +82,7 @@ const MapsToolbar: React.FC<MapsToolbarProps> = ({
 
       {/* ★ 新しいマップ → /dashboard?new=1 に変更 */}
       <Link to="/dashboard?new=1">
-        <Button variant="primary">
+        <Button variant="default">
           <Plus size={14} />
           新しいマップ
         </Button>
