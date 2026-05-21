@@ -24,3 +24,25 @@ def register_all_routes(app: Flask):
     register_relation_routes(app)
     register_log_routes(app)
     register_admin_routes(app)
+
+    try:
+        from routes.auth_v3 import register_auth_v3_routes
+        register_auth_v3_routes(app)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("auth_v3 failed: %s", e)
+
+    try:
+        from routes.login_guard import register_login_guard
+        register_login_guard(app)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("login_guard failed: %s", e)
+    
+    # ===== ▼▼▼ v3 メモ拡張(今回追加)▼▼▼ =====
+    try:
+        from routes.memo_v3 import register_memo_v3_routes
+        register_memo_v3_routes(app)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("memo_v3 failed: %s", e)

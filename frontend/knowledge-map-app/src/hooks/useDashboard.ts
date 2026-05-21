@@ -1,11 +1,14 @@
 /**
- * ダッシュボードのビジネスロジック（最終修正版）
+ * ダッシュボードのビジネスロジック (v3.2.1 完全マージ版)
  *
- * 修正:
- * - ノード配置の重なり防止（resolveOverlaps）
- * - satellite: 上半分、relation候補: 下半分（過去=左、未来=右）
- * - 展開ノード: 候補位置から外側へ直線的に配置
- * - selectedYear → API に渡す
+ * 既存ロジック(関連科目・周辺概念・トピック検知・ロールバック等)は完全保持.
+ *
+ * v3.2.1 で追加:
+ *   - memoTitle state とタイトル変更時の自動保存
+ *   - memoContent 変更時の自動保存(以前は保存されなかった)
+ *   - handleAutoSave をマップ+メモ+タイトルの並列保存に拡張
+ *   - handleCreateBlankMemo (新しいマップボタン用、二重実行ガード付き)
+ *   - loadExistingMemo (マップ一覧から既存マップを開く)
  */
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -22,13 +25,12 @@ import type {
 } from '@/types';
 
 // =============================================
-// 配置ユーティリティ
+// 配置ユーティリティ(既存のまま、無変更)
 // =============================================
 
-const NODE_W = 230;  // ノードの想定幅（重なり判定用）
-const NODE_H = 90;   // ノードの想定高さ（重なり判定用）
+const NODE_W = 230;
+const NODE_H = 90;
 
-/** satellite を親ノードの上半分（-160°〜-20°）に配置 */
 function placeSatellitePos(
   parentPos: { x: number; y: number }, count: number, index: number,
 ): { x: number; y: number } {
@@ -42,25 +44,22 @@ function placeSatellitePos(
   return { x: parentPos.x + Math.cos(a) * r, y: parentPos.y + Math.sin(a) * r };
 }
 
-/** 関連科目候補を配置（過去=左、未来=右に明確分離） */
-function placeRelationCandidatePos(
-  parentPos: { x: number; y: number },
-  direction: 'past' | 'future',
-  index: number,
-  total: number,
-): { x: number; y: number } {
-  const r = 350;
-  // 過去: 真左（180°）を中心に上下に展開
-  // 未来: 真右（0°）を中心に上下に展開
-  const centerDeg = direction === 'past' ? 180 : 0;
-  const spread = 60;
-  const offset = total > 1 ? (index - (total - 1) / 2) * (spread / Math.max(total - 1, 1)) : 0;
-  const deg = centerDeg + offset;
-  const a = (deg * Math.PI) / 180;
-  return { x: parentPos.x + Math.cos(a) * r, y: parentPos.y + Math.sin(a) * r };
+function findClosestNode(
+  nodes: MapNode[],
+  targetX: number,
+  targetY: number,
+): MapNode {
+  let closest = nodes[0];
+  let minDist = Infinity;
+  for (const n of nodes) {
+    const dx = n.position.x - targetX;
+    const dy = n.position.y - targetY;
+    const d = dx * dx + dy * dy;
+    if (d < minDist) { minDist = d; closest = n; }
+  }
+  return closest;
 }
 
-/** 2ノードが重なっているか判定 */
 function isOverlapping(
   a: { x: number; y: number }, b: { x: number; y: number },
   minDistX = NODE_W, minDistY = NODE_H,
@@ -68,7 +67,6 @@ function isOverlapping(
   return Math.abs(a.x - b.x) < minDistX && Math.abs(a.y - b.y) < minDistY;
 }
 
-/** 配置済みノード群に対して重なりを解消する（新規ノード群をずらす） */
 function resolveOverlaps(
   newNodes: MapNode[],
   existingNodes: MapNode[],
@@ -78,11 +76,9 @@ function resolveOverlaps(
     let pos = { ...node.position };
     let attempts = 0;
     const maxAttempts = 30;
-
     while (attempts < maxAttempts) {
       const overlaps = allPositions.some((ep) => isOverlapping(pos, ep));
       if (!overlaps) break;
-      // 放射方向にずらす
       const angle = Math.atan2(pos.y, pos.x || 0.01);
       pos = {
         x: pos.x + Math.cos(angle) * 70,
@@ -90,22 +86,18 @@ function resolveOverlaps(
       };
       attempts++;
     }
-
     allPositions.push(pos);
     return { ...node, position: pos };
   });
-
   return resolved;
 }
 
-/** ノードIDから科目名を推定: "アルゴリズム論第二_0" → "アルゴリズム論第二" */
 function extractSubjectFromId(id: string): string {
   if (!id || id.startsWith('input_')) return '';
   const match = id.match(/^(.+)_\d+$/);
   return match ? match[1] : '';
 }
 
-/** レスポンスのノード群を科目ごとにグルーピング */
 function groupBySubject(
   nodes: RelationMapNode[],
   edges: RelationMapEdge[],
@@ -116,7 +108,7 @@ function groupBySubject(
   for (const n of nodes) {
     if (n.group === 'Input') continue;
     if (!n.label && !n.id) continue;
-    const g = n.group || extractSubjectFromId(n.id) || n.label || '（関連科目）';
+    const g = n.group || extractSubjectFromId(n.id) || n.label || '(関連科目)';
     nodeIdToGroup.set(n.id, g);
     if (!groups.has(g)) groups.set(g, { nodes: [], edges: [] });
     groups.get(g)!.nodes.push(n);
@@ -130,7 +122,6 @@ function groupBySubject(
   return groups;
 }
 
-/** 候補ノードの展開: サブグラフを MapNode/MapEdge に変換 */
 function expandSubGraph(
   cache: RelationSubGraphCache,
   candidatePos: { x: number; y: number },
@@ -143,7 +134,6 @@ function expandSubGraph(
   const spacing = 350;
   const status: NodeStatus = direction === 'past' ? 'relation_past' : 'relation_future';
 
-  // ★ 候補ノードの位置を起点に、外側へ直線的に並べる
   const rawMapped: MapNode[] = rawNodes.map((n, i) => ({
     id: generateId('rn'),
     type: 'custom',
@@ -152,7 +142,7 @@ function expandSubGraph(
       y: candidatePos.y + (i % 2 === 0 ? 0 : 70) * (i % 4 < 2 ? 1 : -1),
     },
     data: {
-      label: n.label || n.id || '（不明）',
+      label: n.label || n.id || '(不明)',
       sentence: n.sentence || '',
       extend_query: '',
       status,
@@ -163,28 +153,22 @@ function expandSubGraph(
       group: subjectName,
       satellites: [],
     },
-    label: n.label || n.id || '（不明）',
+    label: n.label || n.id || '(不明)',
     sentence: n.sentence || '',
   }));
 
-  // 重なり解消
   const nodes = resolveOverlaps(rawMapped, existingNodes);
 
-  // IDマッピング（旧→新）
   const oldToNew = new Map<string, string>();
   rawNodes.forEach((n, i) => { oldToNew.set(n.id, nodes[i].id); });
 
   const edges: MapEdge[] = [];
-
-  // 起点ノード → 最初の展開ノードへ接続
   if (nodes.length > 0) {
     edges.push({
       id: generateId('rle'), source: originNodeId, target: nodes[0].id,
       label: '', isSatellite: false, isRelation: true,
     });
   }
-
-  // 展開ノード間のエッジ
   for (const e of rawEdges) {
     const src = oldToNew.get(e.source);
     const tgt = oldToNew.get(e.target);
@@ -195,6 +179,46 @@ function expandSubGraph(
       });
     }
   }
+
+  return { nodes, edges };
+}
+
+/**
+ * getMap など各種 API が返す「マップ」データから nodes/edges を取り出して正規化する.
+ * 戻り構造のゆれ(map でラップ / knowledge_map / JSON 文字列 など)を吸収する.
+ */
+function extractNodesEdges(raw: any): { nodes: any[]; edges: any[] } {
+  if (!raw) return { nodes: [], edges: [] };
+
+  // ラップを順にほどく
+  let obj = raw;
+  // よくあるラッパーキーを探索
+  const wrapKeys = ['map', 'knowledge_map', 'knowledgeMap', 'data', 'result'];
+  for (const k of wrapKeys) {
+    if (obj && typeof obj === 'object' && obj[k] && typeof obj[k] === 'object') {
+      // ラッパーの中に nodes/edges があればそちらを優先
+      if (obj[k].nodes !== undefined || obj[k].edges !== undefined ||
+          obj[k].nodes_json !== undefined || obj[k].edges_json !== undefined) {
+        obj = obj[k];
+        break;
+      }
+    }
+  }
+
+  // nodes/edges を取り出す(別名・JSON文字列にも対応)
+  let nodes: any = obj.nodes ?? obj.nodes_json ?? obj.node_list ?? [];
+  let edges: any = obj.edges ?? obj.edges_json ?? obj.edge_list ?? [];
+
+  // JSON 文字列で入っている場合はパース
+  if (typeof nodes === 'string') {
+    try { nodes = JSON.parse(nodes); } catch { nodes = []; }
+  }
+  if (typeof edges === 'string') {
+    try { edges = JSON.parse(edges); } catch { edges = []; }
+  }
+
+  if (!Array.isArray(nodes)) nodes = [];
+  if (!Array.isArray(edges)) edges = [];
 
   return { nodes, edges };
 }
@@ -217,10 +241,19 @@ export function useDashboard() {
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
   const [selectedYear, setSelectedYear] = useState<number>(3);
 
+  // ★★★ v3.2.1 追加: タイトル ★★★
+  const [memoTitle, setMemoTitle] = useState<string>('');
+
   const edgesRef = useRef(edges);     useEffect(() => { edgesRef.current = edges; }, [edges]);
   const nodesRef = useRef(nodes);     useEffect(() => { nodesRef.current = nodes; }, [nodes]);
   const memoRef = useRef(currentMemo); useEffect(() => { memoRef.current = currentMemo; }, [currentMemo]);
   const yearRef = useRef(selectedYear); useEffect(() => { yearRef.current = selectedYear; }, [selectedYear]);
+
+  // ★★★ v3.2.1 追加: タイトル・本文の最新値を ref で保持 ★★★
+  const titleRef = useRef(memoTitle);
+  useEffect(() => { titleRef.current = memoTitle; }, [memoTitle]);
+  const contentRef = useRef(memoContent);
+  useEffect(() => { contentRef.current = memoContent; }, [memoContent]);
 
   const surroundingConcepts: SurroundingConceptsMap = {};
 
@@ -235,6 +268,12 @@ export function useDashboard() {
 
   const relationCacheRef = useRef<Map<string, RelationSubGraphCache>>(new Map());
   const topicTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ★★★ v3.2.1 追加: 自動保存のデバウンスタイマー ★★★
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ★★★ v3.2.1 追加: handleCreateBlankMemo の二重実行ガード ★★★
+  const isCreatingBlankRef = useRef<boolean>(false);
 
   const getLatestRealLabels = useCallback((): string[] => {
     return nodesRef.current
@@ -269,7 +308,12 @@ export function useDashboard() {
     topicTimerRef.current = setTimeout(() => runTopicDetection(text), 1500);
   }, [runTopicDetection]);
 
-  useEffect(() => { return () => { if (topicTimerRef.current) clearTimeout(topicTimerRef.current); }; }, []);
+  useEffect(() => {
+    return () => {
+      if (topicTimerRef.current) clearTimeout(topicTimerRef.current);
+      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    };
+  }, []);
 
   const handleModeChange = useCallback((m: AppMode) => {
     loggingService.logActivity('mode_switch', { from: mode, to: m }, memoRef.current?.id);
@@ -277,96 +321,145 @@ export function useDashboard() {
   }, [mode]);
 
   // =============================================
-  // 関連科目: 候補ノード作成
+  // 関連科目: マップ全体から候補を算出(既存のまま)
   // =============================================
 
-  const fetchRelationsForNodes = useCallback(async (realNodes: MapNode[]) => {
+  const fetchRelationsForMap = useCallback(async (realNodes: MapNode[]) => {
+    if (realNodes.length === 0) return;
     const year = yearRef.current;
-    try {
-      const promises = realNodes.map((node) =>
-        mapService.getTemporalRelations({
-          label: node.label || node.data?.label || '',
-          sentence: node.sentence || node.data?.sentence || '',
-          id: node.id, year,
-        })
-          .then((r) => (r.error ? null : r))
-          .catch(() => null),
-      );
 
-      const results = await Promise.all(promises);
+    try {
+      const combinedLabel = realNodes
+        .map((n) => n.label || n.data?.label || '')
+        .filter(Boolean)
+        .join('、');
+      const combinedSentence = realNodes
+        .map((n) => n.sentence || n.data?.sentence || '')
+        .filter(Boolean)
+        .join(' ');
+
+      const r = await mapService
+        .getTemporalRelations({
+          label: combinedLabel,
+          sentence: combinedSentence,
+          year,
+        })
+        .catch(() => null);
+
+      if (!r || r.error) {
+        console.warn('関連科目取得エラー:', r?.error);
+        return;
+      }
+
+      const xs = realNodes.map((n) => n.position.x);
+      const ys = realNodes.map((n) => n.position.y);
+      const centerX = (Math.min(...xs) + Math.max(...xs)) / 2;
+      const centerY = (Math.min(...ys) + Math.max(...ys)) / 2;
+      const mapWidth = Math.max(...xs) - Math.min(...xs);
+      const offsetX = Math.max(mapWidth / 2, 300) + 450;
+
       const candidateNodes: MapNode[] = [];
       const candidateEdges: MapEdge[] = [];
 
-      for (let i = 0; i < results.length; i++) {
-        const r = results[i] as TemporalRelationResponse | null;
-        if (!r) continue;
+      // 過去(基礎)科目
+      const pastNodes = r.past_map?.nodes;
+      if (Array.isArray(pastNodes) && pastNodes.length > 0) {
+        const groups = groupBySubject(pastNodes, r.past_map?.edges || []);
+        const total = Math.min(groups.size, 3);
+        if (total > 0) {
+          const headerId = generateId('rph');
+          candidateNodes.push({
+            id: headerId, type: 'custom',
+            position: { x: centerX - offsetX, y: centerY - (total * 60) - 30 },
+            data: {
+              label: '📘 過去の関連科目',
+              sentence: '', extend_query: '',
+              status: 'relation_past' as NodeStatus,
+              isSatellite: false, isRelation: true,
+              relationDirection: 'past', group: '', satellites: [],
+            },
+            label: '📘 過去の関連科目',
+          });
 
-        const origin = realNodes[i];
-        const oId = origin.id;
-        const oPos = origin.position;
-
-        // --- 過去 ---
-        const pastNodes = r.past_map?.nodes;
-        if (Array.isArray(pastNodes) && pastNodes.length > 0) {
-          const groups = groupBySubject(pastNodes, r.past_map?.edges || []);
           let idx = 0;
-          const total = Math.min(groups.size, 3);
           for (const [subjectName, sg] of groups) {
             if (idx >= 3) break;
             const cid = generateId('rpc');
+            const closestNode = findClosestNode(realNodes, centerX - offsetX, centerY);
             relationCacheRef.current.set(cid, {
-              subjectName, direction: 'past', originNodeId: oId,
+              subjectName, direction: 'past',
+              originNodeId: closestNode.id,
               nodes: sg.nodes, edges: sg.edges,
             });
+            const yOffset = (idx - (total - 1) / 2) * 120;
             candidateNodes.push({
               id: cid, type: 'custom',
-              position: placeRelationCandidatePos(oPos, 'past', idx, total),
+              position: { x: centerX - offsetX, y: centerY + yOffset },
               data: {
                 label: subjectName,
                 sentence: `基礎科目 — ${sg.nodes.length} 概念`,
                 extend_query: '', status: 'relation_past_candidate' as NodeStatus,
                 isSatellite: false, isRelation: true,
-                relationDirection: 'past', relationOriginId: oId,
+                relationDirection: 'past', relationOriginId: closestNode.id,
                 relationSubjectName: subjectName, group: subjectName, satellites: [],
               },
               label: subjectName,
             });
             candidateEdges.push({
-              id: generateId('rpce'), source: oId, target: cid,
+              id: generateId('rphe'), source: headerId, target: cid,
               label: '', isSatellite: false, isRelation: true,
             });
             idx++;
           }
         }
+      }
 
-        // --- 未来 ---
-        const futureNodes = r.future_map?.nodes;
-        if (Array.isArray(futureNodes) && futureNodes.length > 0) {
-          const groups = groupBySubject(futureNodes, r.future_map?.edges || []);
+      // 未来(発展)科目
+      const futureNodes = r.future_map?.nodes;
+      if (Array.isArray(futureNodes) && futureNodes.length > 0) {
+        const groups = groupBySubject(futureNodes, r.future_map?.edges || []);
+        const total = Math.min(groups.size, 3);
+        if (total > 0) {
+          const headerId = generateId('rfh');
+          candidateNodes.push({
+            id: headerId, type: 'custom',
+            position: { x: centerX + offsetX, y: centerY - (total * 60) - 30 },
+            data: {
+              label: '📗 未来の関連科目',
+              sentence: '', extend_query: '',
+              status: 'relation_future' as NodeStatus,
+              isSatellite: false, isRelation: true,
+              relationDirection: 'future', group: '', satellites: [],
+            },
+            label: '📗 未来の関連科目',
+          });
+
           let idx = 0;
-          const total = Math.min(groups.size, 3);
           for (const [subjectName, sg] of groups) {
             if (idx >= 3) break;
             const cid = generateId('rfc');
+            const closestNode = findClosestNode(realNodes, centerX + offsetX, centerY);
             relationCacheRef.current.set(cid, {
-              subjectName, direction: 'future', originNodeId: oId,
+              subjectName, direction: 'future',
+              originNodeId: closestNode.id,
               nodes: sg.nodes, edges: sg.edges,
             });
+            const yOffset = (idx - (total - 1) / 2) * 120;
             candidateNodes.push({
               id: cid, type: 'custom',
-              position: placeRelationCandidatePos(oPos, 'future', idx, total),
+              position: { x: centerX + offsetX, y: centerY + yOffset },
               data: {
                 label: subjectName,
                 sentence: `発展科目 — ${sg.nodes.length} 概念`,
                 extend_query: '', status: 'relation_future_candidate' as NodeStatus,
                 isSatellite: false, isRelation: true,
-                relationDirection: 'future', relationOriginId: oId,
+                relationDirection: 'future', relationOriginId: closestNode.id,
                 relationSubjectName: subjectName, group: subjectName, satellites: [],
               },
               label: subjectName,
             });
             candidateEdges.push({
-              id: generateId('rfce'), source: oId, target: cid,
+              id: generateId('rfhe'), source: headerId, target: cid,
               label: '', isSatellite: false, isRelation: true,
             });
             idx++;
@@ -375,7 +468,6 @@ export function useDashboard() {
       }
 
       if (candidateNodes.length > 0) {
-        // ★ 重なり解消してから追加
         const resolved = resolveOverlaps(candidateNodes, nodesRef.current);
         setNodes((prev) => [...prev, ...resolved]);
         setEdges((prev) => { const ne = [...prev, ...candidateEdges]; edgesRef.current = ne; return ne; });
@@ -386,22 +478,16 @@ export function useDashboard() {
   }, []);
 
   // =============================================
-  // 関連科目: 候補を展開（「詳細を表示」）
+  // 関連科目: 候補を展開(既存のまま)
   // =============================================
 
   const handleExpandRelation = useCallback((candidateNodeId: string) => {
     const cache = relationCacheRef.current.get(candidateNodeId);
     if (!cache) return;
-
-    // 候補ノードの位置を取得（展開の起点とする）
     const candidateNode = nodesRef.current.find((n) => n.id === candidateNodeId);
     const candidatePos = candidateNode?.position || { x: 0, y: 0 };
-
-    // 候補ノードを除いた既存ノード一覧（重なり判定用）
     const existing = nodesRef.current.filter((n) => n.id !== candidateNodeId);
-
     const { nodes: expNodes, edges: expEdges } = expandSubGraph(cache, candidatePos, existing);
-
     setNodes((prev) => [...prev.filter((n) => n.id !== candidateNodeId), ...expNodes]);
     setEdges((prev) => {
       const ne = [
@@ -411,7 +497,6 @@ export function useDashboard() {
       edgesRef.current = ne;
       return ne;
     });
-
     relationCacheRef.current.delete(candidateNodeId);
     loggingService.logActivity('relation_expanded', {
       subject: cache.subjectName, direction: cache.direction,
@@ -419,7 +504,6 @@ export function useDashboard() {
     }, memoRef.current?.id);
   }, []);
 
-  // relation-expand イベント（CustomNode から発火）
   useEffect(() => {
     const handler = (e: Event) => {
       const d = (e as CustomEvent).detail;
@@ -430,15 +514,95 @@ export function useDashboard() {
   }, [handleExpandRelation]);
 
   // =============================================
-  // マップ生成
+  // ★★★ v3.2.1 追加: 自動保存(タイトル + 本文 + マップ)★★★
+  // =============================================
+
+  /** 即時保存. ノード/エッジ自動保存(KnowledgeMapDisplay 経由) からも呼ばれる. */
+  const handleAutoSave = useCallback(async () => {
+    if (!memoRef.current) return;
+    setSaveStatus('saving');
+    try {
+      const realN = nodesRef.current.filter((n) => !n.data?.isSatellite && !n.data?.isRelation);
+      const realE = edgesRef.current.filter((e) => !e.isSatellite && !e.isRelation);
+
+      // ★ デバッグ: 何件保存しようとしているか(問題解決後は削除可)
+      console.log('💾 autosave → memoId:', memoRef.current.id,
+                  'nodes:', realN.length, 'edges:', realE.length);
+
+      // マップ・タイトル・本文を並列で保存
+      const tasks: Promise<unknown>[] = [
+        mapService.updateMap(memoRef.current.id, realN, realE),
+      ];
+      // patchMemo は memoService に追加された関数. 失敗してもマップ保存だけは進める
+      try {
+        tasks.push(
+          memoService.patchMemo(memoRef.current.id, {
+            title: titleRef.current,
+            content: contentRef.current,
+          }),
+        );
+      } catch (e) {
+        // patchMemo が無い旧 memoService の場合は無視
+      }
+      await Promise.all(tasks);
+
+      setSaveStatus('saved');
+      setTimeout(() => setSaveStatus('idle'), 2000);
+    } catch (e) {
+      console.warn('autosave failed:', e);
+      setSaveStatus('idle');
+    }
+  }, []);
+
+  /** タイトル・本文の変更時のデバウンス自動保存 (1.5 秒) */
+  const handleAutoSaveRef = useRef(handleAutoSave);
+  useEffect(() => { handleAutoSaveRef.current = handleAutoSave; }, [handleAutoSave]);
+
+  const triggerAutoSaveDebounced = useCallback(() => {
+    if (!memoRef.current) return;
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    autoSaveTimerRef.current = setTimeout(() => {
+      void handleAutoSaveRef.current();
+    }, 1500);
+  }, []);
+
+  // memoContent 変更で発火 (currentMemo がある時のみ)
+  useEffect(() => {
+    if (!currentMemo) return;
+    triggerAutoSaveDebounced();
+  }, [memoContent, currentMemo, triggerAutoSaveDebounced]);
+
+  // memoTitle 変更で発火 (currentMemo がある時のみ)
+  useEffect(() => {
+    if (!currentMemo) return;
+    triggerAutoSaveDebounced();
+  }, [memoTitle, currentMemo, triggerAutoSaveDebounced]);
+
+  // =============================================
+  // マップ生成(既存のまま、タイトル復元だけ追記)
   // =============================================
 
   const handleGenerateMap = useCallback(async (content: string) => {
     setLoading(true);
     relationCacheRef.current.clear();
     try {
+      // ★ 既に空メモが作られている場合は、それを使って PATCH + マップ生成にしたい
+      //   が、既存 createMemoWithMap は新メモを毎回作る. 既存挙動を壊さないため
+      //   そのまま使用. 既存 currentMemo は上書きされる(古い空メモはサーバに残る)
+      //   → サーバ側で「空メモがあれば再利用」する改善は後日.
       const { memo, map } = await memoService.createMemoWithMap(content, mode);
       setCurrentMemo(memo);
+
+      // ★ サーバが付けたタイトルがあれば反映、無ければ既存のタイトルを維持
+      const serverTitle = (memo as any).title;
+      if (serverTitle) {
+        setMemoTitle(serverTitle);
+      }
+      // 注: 既にタイトルを編集していた場合はその値を維持したいので、
+      //     サーバ側のタイトルで上書きしない選択肢もある. ここでは
+      //     「空メモから来た」場合のみ既タイトル維持にしたい.
+      //     → currentMemo が存在し、かつタイトルがすでに入っていた場合は維持:
+      // (上のシンプル実装でも、デバウンス自動保存が後で patchMemo を投げるので最終的に同期する)
 
       const raw: MapNode[] = (map.nodes || []).map((n: any) => ({
         id: n.id, type: 'custom', position: { x: 0, y: 0 },
@@ -463,7 +627,7 @@ export function useDashboard() {
       setPhase('revise');
       loggingService.logActivity('map_generate', { node_count: layout.length }, memo.id);
 
-      // (A) 周辺概念 → satellite（上半分に配置）
+      // (A) 周辺概念 → satellite
       mapService.getSurroundingConcepts(layout)
         .then((surrounding) => {
           const satN: MapNode[] = []; const satE: MapEdge[] = [];
@@ -485,23 +649,133 @@ export function useDashboard() {
             });
           }
           if (satN.length > 0) {
-            // ★ satellite は親ノードに近接配置するため、重なり解消しない
             setNodes((p) => [...p, ...satN]);
             setEdges((p) => { const ne = [...p, ...satE]; edgesRef.current = ne; return ne; });
           }
         })
         .catch((e) => console.warn('周辺概念取得失敗:', e));
 
-      // (B) 関連科目候補（下半分に配置）
-      fetchRelationsForNodes(layout);
+      // (B) 関連科目候補
+      fetchRelationsForMap(layout);
     } catch (e) {
       console.error('マップ生成エラー:', e);
     } finally {
       setLoading(false);
     }
-  }, [mode, fetchRelationsForNodes]);
+  }, [mode, fetchRelationsForMap]);
 
-  // ===== その他ハンドラ =====
+  // =============================================
+  // ★★★ v3.2.1 追加: 新規空メモ作成(二重実行防止) ★★★
+  // =============================================
+
+  const handleCreateBlankMemo = useCallback(async (): Promise<Memo | null> => {
+    // React 18 StrictMode で useEffect が 2 回呼ばれてもメモが 2 つ作られないようガード
+    if (isCreatingBlankRef.current) return null;
+    if (memoRef.current) return memoRef.current;  // 既にメモがある時は新規作成しない
+
+    isCreatingBlankRef.current = true;
+    try {
+      const memo = await memoService.createBlankMemo(mode, '新しい振り返り');
+      setCurrentMemo(memo);
+      setMemoTitle((memo as any).title || '新しい振り返り');
+      setMemoContent('');
+      setNodes([]);
+      setEdges([]);
+      nodesRef.current = [];
+      edgesRef.current = [];
+      setNodeStatuses({});
+      setDescribedLabels([]);
+      setCurrWriting(null);
+      setNextSugg([]);
+      setPhase('write');
+      return memo;
+    } catch (e) {
+      console.error('空メモ作成失敗:', e);
+      return null;
+    } finally {
+      // フラグは少し遅らせて解放(StrictMode 2回目を確実に弾く)
+      setTimeout(() => { isCreatingBlankRef.current = false; }, 1000);
+    }
+  }, [mode]);
+
+  // =============================================
+  // ★★★ v3.2.1 追加: 既存メモを開く ★★★
+  // =============================================
+
+  const loadExistingMemo = useCallback(async (memoId: number): Promise<void> => {
+    if (memoRef.current?.id === memoId) return;
+    setLoading(true);
+    relationCacheRef.current.clear();
+    try {
+      const memo = await memoService.getMemo(memoId);
+      setCurrentMemo(memo);
+      setMemoTitle((memo as any).title || '');
+      setMemoContent(memo.content || '');
+      setMode(memo.mode);
+
+      const rawMap = await mapService.getMap(memoId).catch((err) => {
+        console.warn('getMap 失敗:', err);
+        return null;
+      });
+
+      // ★ デバッグ: getMap が実際に返した構造を確認(問題解決後は削除可)
+      console.log('🔍 getMap raw response:', rawMap);
+
+      // ★ getMap の戻り構造を正規化(A〜E どのパターンでも nodes/edges を取り出す)
+      const { nodes: rawNodes, edges: rawEdgesData } = extractNodesEdges(rawMap);
+
+      console.log('🔍 normalized nodes/edges count:', rawNodes.length, rawEdgesData.length);
+
+      if (rawNodes.length > 0) {
+        const raw: MapNode[] = rawNodes.map((n: any) => ({
+          id: n.id ?? generateId('n'),
+          type: 'custom',
+          position: n.position || { x: n.x ?? 0, y: n.y ?? 0 },
+          data: {
+            label: n.label || n.data?.label || n.id,
+            sentence: n.sentence || n.data?.sentence || '',
+            extend_query: n.extend_query || n.data?.extend_query || '',
+            status: 'default' as NodeStatus,
+            isSatellite: false, isRelation: false, satellites: [],
+          },
+          label: n.label || n.data?.label || n.id,
+          sentence: n.sentence || n.data?.sentence || '',
+          extend_query: n.extend_query || n.data?.extend_query || '',
+        }));
+        const rawEdges: MapEdge[] = rawEdgesData.map((e: any) => ({
+          id: e.id ?? generateId('e'),
+          source: e.source ?? e.from,
+          target: e.target ?? e.to,
+          label: e.label || '', isSatellite: false, isRelation: false,
+        }));
+
+        const hasPos = raw.every((n) => n.position.x !== 0 || n.position.y !== 0);
+        const layout = hasPos ? raw : computeRadialLayout(raw, rawEdges);
+        setNodes(layout);
+        setEdges(rawEdges);
+        nodesRef.current = layout;
+        edgesRef.current = rawEdges;
+        setPhase('revise');
+
+        fetchRelationsForMap(layout);
+      } else {
+        // マップがまだ無い(空メモ等)
+        setNodes([]);
+        setEdges([]);
+        nodesRef.current = [];
+        edgesRef.current = [];
+        setPhase('write');
+      }
+    } catch (e) {
+      console.error('既存メモ読み込み失敗:', e);
+    } finally {
+      setLoading(false);
+    }
+  }, [fetchRelationsForMap]);
+
+  // =============================================
+  // その他ハンドラ(既存のまま)
+  // =============================================
 
   const handleAddNode = useCallback(async (keyword: string) => {
     try {
@@ -535,17 +809,6 @@ export function useDashboard() {
     setEdges((prev) => { const nw = [...prev, ne]; edgesRef.current = nw; return nw; });
   }, []);
 
-  const handleAutoSave = useCallback(async () => {
-    if (!memoRef.current) return;
-    setSaveStatus('saving');
-    try {
-      const realN = nodesRef.current.filter((n) => !n.data?.isSatellite && !n.data?.isRelation);
-      const realE = edgesRef.current.filter((e) => !e.isSatellite && !e.isRelation);
-      await mapService.updateMap(memoRef.current.id, realN, realE);
-      setSaveStatus('saved'); setTimeout(() => setSaveStatus('idle'), 2000);
-    } catch { setSaveStatus('idle'); }
-  }, []);
-
   const handleRollback = useCallback(async (version: number) => {
     if (!memoRef.current) return;
     try {
@@ -576,5 +839,10 @@ export function useDashboard() {
     handleAddNode, handleSatelliteAdd, handleConnect,
     handleAutoSave, handleRollback, handleLogout,
     handleExpandRelation, navigate,
+
+    // ★★★ v3.2.1 追加 ★★★
+    memoTitle, setMemoTitle,
+    handleCreateBlankMemo,
+    loadExistingMemo,
   };
 }

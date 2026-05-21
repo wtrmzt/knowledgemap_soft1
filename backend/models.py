@@ -5,6 +5,7 @@
 from datetime import datetime, timezone
 from flask_sqlalchemy import SQLAlchemy
 
+from sqlalchemy import Index
 db = SQLAlchemy()
 
 
@@ -22,6 +23,14 @@ class User(db.Model):
     memos = db.relationship("Memo", backref="user", lazy="dynamic")
     activity_logs = db.relationship("UserActivityLog", backref="user", lazy="dynamic")
 
+    # ===== v3 追加(Google ログイン)=====
+    google_sub = db.Column(db.String(255), unique=True, nullable=True, index=True)
+    email = db.Column(db.String(255), unique=True, nullable=True, index=True)
+    display_name = db.Column(db.String(255), nullable=True)
+    avatar_url = db.Column(db.String(500), nullable=True)
+    auth_provider = db.Column(db.String(20), nullable=False, default="legacy")
+    last_login_at = db.Column(db.DateTime, nullable=True)
+
     def to_dict(self):
         return {
             "id": self.id,
@@ -30,6 +39,12 @@ class User(db.Model):
             "is_admin": self.is_admin,
             "consented": self.consented,
             "created_at": self.created_at.isoformat() if self.created_at else None,
+            
+            # ===== v3 追加 =====
+            "email": self.email,
+            "display_name": self.display_name,
+            "avatar_url": self.avatar_url,
+            "auth_provider": self.auth_provider,
         }
 
 
@@ -48,6 +63,14 @@ class Memo(db.Model):
     knowledge_map = db.relationship("KnowledgeMap", backref="memo", uselist=False)
     map_histories = db.relationship("MapHistory", backref="memo", lazy="dynamic",
                                     order_by="MapHistory.version.desc()")
+
+
+    # ===== v3 追加 =====
+    title = db.Column(db.String(200), nullable=True)
+    thumbnail_url = db.Column(db.String(500), nullable=True)
+    node_count = db.Column(db.Integer, nullable=False, default=0)
+    edge_count = db.Column(db.Integer, nullable=False, default=0)
+    is_archived = db.Column(db.Boolean, nullable=False, default=False, index=True)
 
     def to_dict(self):
         return {

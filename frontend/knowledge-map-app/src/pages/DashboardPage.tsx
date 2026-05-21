@@ -1,12 +1,17 @@
 /**
- * ダッシュボードページ（Phase 3 v3 修正版）
+ * ダッシュボードページ (v3.2.1 完成版)
  *
- * 変更点:
- * - ヘッダーに学年ドロップダウンを追加
- * - RelationPanel は廃止（マップ上に直接表示）
+ * 修正点:
+ * - 「新しいマップ」二重作成を防ぐ useRef ガード
+ * - タイトル編集欄(currentMemo がある時のみ表示)
+ * - ?memo_id=<id> / ?new=1 のクエリ対応
  */
-import React from 'react';
-import { History, LogOut, Settings, Save, CheckCircle2, GraduationCap } from 'lucide-react';
+import React, { useEffect, useRef } from 'react';
+import { useNavigate, useSearchParams, Link } from 'react-router-dom';
+import {
+  History, LogOut, Settings, Save, CheckCircle2, GraduationCap,
+  LayoutGrid,
+} from 'lucide-react';
 import {
   ModeSwitcher, ReflectionSheet,
   KnowledgeMapDisplay, MapHistoryPanel,
@@ -23,6 +28,56 @@ const YEAR_OPTIONS = [
 
 const DashboardPage: React.FC = () => {
   const d = useDashboard();
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  const memoIdParam = searchParams.get('memo_id');
+  const isNewParam = searchParams.get('new') === '1';
+
+  // ★ StrictMode の二重 useEffect 実行を防ぐためのガード(コンポーネント単位)
+  const handledMemoIdRef = useRef<string | null>(null);
+  const handledNewRef = useRef<boolean>(false);
+
+  // ?memo_id=<id> で既存マップを開く
+  useEffect(() => {
+    if (!memoIdParam) return;
+    // 同じ memo_id を二重処理しない
+    if (handledMemoIdRef.current === memoIdParam) return;
+    handledMemoIdRef.current = memoIdParam;
+
+    const id = Number(memoIdParam);
+    if (Number.isNaN(id)) return;
+    if (typeof d.loadExistingMemo === 'function') {
+      void d.loadExistingMemo(id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [memoIdParam]);
+
+  // ?new=1 で空メモを作成
+  useEffect(() => {
+    if (!isNewParam) return;
+    // 二重作成防止(StrictMode 対策 + 連続実行防止)
+    if (handledNewRef.current) return;
+    handledNewRef.current = true;
+
+    if (d.currentMemo) return;
+    if (typeof d.handleCreateBlankMemo !== 'function') return;
+
+    (async () => {
+      const memo = await d.handleCreateBlankMemo();
+      if (memo) {
+        // URL を ?memo_id=<id> に置き換え(リロード・戻る対応 + ?new=1 の再実行防止)
+        handledMemoIdRef.current = String(memo.id);  // loadExistingMemo の再取得を防ぐ
+        setSearchParams({ memo_id: String(memo.id) }, { replace: true });
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isNewParam]);
+
+  const handleTitleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    d.setMemoTitle?.(e.target.value);
+  };
+
+  const titleValue = d.memoTitle ?? '';
 
   return (
     <div className="h-screen flex flex-col bg-surface-50">
@@ -41,7 +96,6 @@ const DashboardPage: React.FC = () => {
 
           <ModeSwitcher mode={d.mode} onChange={d.handleModeChange} />
 
-          {/* ★ 学年ドロップダウン */}
           <div className="flex items-center gap-1.5 ml-2">
             <GraduationCap size={14} className="text-surface-400" />
             <select
@@ -56,9 +110,31 @@ const DashboardPage: React.FC = () => {
               ))}
             </select>
           </div>
+
+          <Link
+            to="/maps"
+            className="ml-2 flex items-center gap-1.5 text-xs text-surface-500 hover:text-primary-600 transition-colors"
+            title="マップ一覧"
+          >
+            <LayoutGrid size={14} />
+            マップ一覧
+          </Link>
         </div>
 
         <div className="flex items-center gap-2">
+          {/* ★ タイトル編集欄 */}
+          {d.currentMemo && (
+            <input
+              type="text"
+              value={titleValue}
+              onChange={handleTitleChange}
+              placeholder="タイトルを入力..."
+              maxLength={100}
+              className="w-56 text-xs font-medium text-surface-700 bg-surface-50 border border-surface-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-primary-400 focus:border-primary-400 placeholder:text-surface-300 transition-colors"
+              aria-label="マップタイトル"
+            />
+          )}
+
           {d.saveStatus === 'saving' && (
             <span className="text-[11px] text-surface-400 flex items-center gap-1">
               <Save size={12} className="animate-pulse" /> 保存中...
@@ -69,6 +145,7 @@ const DashboardPage: React.FC = () => {
               <CheckCircle2 size={12} /> 保存済み
             </span>
           )}
+
           {d.currentMemo && (
             <Button variant="ghost" size="sm" onClick={() => d.setShowHistory(!d.showHistory)}>
               <History size={14} />

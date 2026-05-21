@@ -1,46 +1,52 @@
-"""認証エンドポイント: ログイン・同意・ユーザー情報"""
-from flask import Flask, request, jsonify, g
-from models import db, User
-from auth import generate_token, token_required, is_admin_user_id
+"""認証ルート (元の auth.py 復旧版)."""
+from datetime import datetime
+from flask import request, jsonify, g
+from models import User, db
+from auth import token_required, generate_token
+
+ADMIN_USER_IDS = {"admin", "researcher", "admin_user"}
 
 
-def register_auth_routes(app: Flask):
-
-    @app.route("/api/login", methods=["POST"])
+def register_auth_routes(app):
+    @app.post("/api/login")
     def login():
-        data = request.get_json() or {}
-        user_id = data.get("user_id", "").strip()
+        body = request.get_json(silent=True) or {}
+        user_id = (body.get("user_id") or "").strip()
         if not user_id:
-            return jsonify({"error": "ユーザーIDが必要です"}), 400
+            return {"error": "user_id required"}, 400
 
         user = User.query.filter_by(user_id=user_id).first()
-        if not user:
+        if user is None:
             user = User(
                 user_id=user_id,
-                display_name=user_id,
-                is_admin=is_admin_user_id(user_id),
+                is_admin=(user_id in ADMIN_USER_IDS),
             )
             db.session.add(user)
             db.session.commit()
 
         token = generate_token(user)
-        return jsonify({"token": token, "user": user.to_dict()})
+        return {"token": token, "user": user.to_dict()}
 
-    @app.route("/api/consent", methods=["POST"])
+    @app.post("/api/consent")
     @token_required
     def update_consent():
-        data = request.get_json() or {}
-        consented = data.get("consented", False)
-        user = User.query.get(g.current_user["user_db_id"])
-        if user:
-            user.consented = consented
-            db.session.commit()
-        return jsonify({"ok": True})
+        body = request.get_json(silent=True) or {}
+        consented = bool(body.get("consented", True))
 
-    @app.route("/api/me", methods=["GET"])
+        user_id = g.current_user["user_id"]
+        user = User.query.filter_by(user_id=user_id).first()
+        if user is None:
+            return {"error": "user not found"}, 404
+
+        user.consented = consented
+        db.session.commit()
+        return {"user": user.to_dict()}
+
+    @app.get("/api/me")
     @token_required
     def get_me():
-        user = User.query.get(g.current_user["user_db_id"])
-        if not user:
-            return jsonify({"error": "ユーザーが見つかりません"}), 404
-        return jsonify({"user": user.to_dict()})
+        user_id = g.current_user["user_id"]
+        user = User.query.filter_by(user_id=user_id).first()
+        if user is None:
+            return {"error": "user not found"}, 404
+        return user.to_dict()
