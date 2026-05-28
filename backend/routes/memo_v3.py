@@ -31,7 +31,7 @@ def register_memo_v3_routes(app):
     @app.get("/api/memos/list")
     @token_required
     def list_memos_v3():
-        user_id = g.current_user["user_id"]
+        user_id = g.current_user["user_db_id"]
 
         try:
             page = max(1, int(request.args.get("page", 1)))
@@ -74,7 +74,7 @@ def register_memo_v3_routes(app):
     @app.get("/api/memos/<int:memo_id>")
     @token_required
     def get_single_memo_v3(memo_id: int):
-        user_id = g.current_user["user_id"]
+        user_id = g.current_user["user_db_id"]
         memo = Memo.query.filter_by(id=memo_id, user_id=user_id).first()
         if memo is None:
             return {"error": "not found"}, 404
@@ -84,7 +84,7 @@ def register_memo_v3_routes(app):
     # 更新処理の共通ロジック
     # ==========================================================
     def _do_update(memo_id: int):
-        user_id = g.current_user["user_id"]
+        user_id = g.current_user["user_db_id"]
         memo = Memo.query.filter_by(id=memo_id, user_id=user_id).first()
         if memo is None:
             return {"error": "not found"}, 404
@@ -146,7 +146,7 @@ def register_memo_v3_routes(app):
     def generate_map_for_memo(memo_id: int):
         from ai_service import generate_map_from_text
 
-        user_id = g.current_user["user_id"]
+        user_id = g.current_user["user_db_id"]
         memo = Memo.query.filter_by(id=memo_id, user_id=user_id).first()
         if memo is None:
             return {"error": "not found"}, 404
@@ -211,7 +211,7 @@ def register_memo_v3_routes(app):
     @app.post("/api/memos/blank")
     @token_required
     def create_blank_memo():
-        user_id = g.current_user["user_id"]
+        user_id = g.current_user["user_db_id"]
         body = request.get_json(silent=True) or {}
         mode = body.get("mode", "reflection")
         if mode not in ("reflection", "research", "idea"):
