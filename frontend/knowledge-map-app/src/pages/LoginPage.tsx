@@ -132,18 +132,17 @@ export default function LoginPage() {
             className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-primary focus:outline-none"
           />
           <Button
-            variant="primary"
-            size="md"
-            loading={loading}
-            disabled={!userId.trim()}
+            variant="default"
+            size="lg"
+            disabled={loading || !userId.trim()}
             onClick={() => handleIdLogin(userId.trim())}
             className="w-full"
           >
-            IDでログイン
+            {loading ? "ログイン中…" : "IDでログイン"}
           </Button>
           <Button
             variant="ghost"
-            size="md"
+            size="lg"
             onClick={() => handleIdLogin(DEMO_USER_ID)}
             className="w-full"
           >
