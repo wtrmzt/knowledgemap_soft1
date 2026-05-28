@@ -17,7 +17,7 @@ from datetime import datetime
 from flask import current_app, g, request
 
 from auth import token_required
-from models import Memo, KnowledgeMap, db
+from models import Memo, KnowledgeMap, MapHistory, db
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +131,79 @@ def register_memo_v3_routes(app):
     @token_required
     def patch_memo_v3(memo_id: int):
         return _do_update(memo_id)
+
+    # ==========================================================
+    # POST /api/memos/<id>/generate_map - 既存メモにマップを生成して保存
+    # ----------------------------------------------------------
+    # 「?new=1 → ブランクメモ作成 → マップを生成」の経路で、
+    # 生成のたびに createMemoWithMap が新規メモを作ってしまい、
+    # 本文はメモA・マップはメモB と分かれる二重化が発生していた。
+    # このエンドポイントは現在のメモ自身を更新するため、本文・タイトル・
+    # マップが必ず同一メモに揃う。レスポンス形は createMemoWithMap と同じ。
+    # ==========================================================
+    @app.post("/api/memos/<int:memo_id>/generate_map")
+    @token_required
+    def generate_map_for_memo(memo_id: int):
+        from ai_service import generate_map_from_text
+
+        user_id = g.current_user["user_id"]
+        memo = Memo.query.filter_by(id=memo_id, user_id=user_id).first()
+        if memo is None:
+            return {"error": "not found"}, 404
+
+        body = request.get_json(silent=True) or {}
+        content = (body.get("content") if body.get("content") is not None else memo.content) or ""
+        content = str(content).strip()
+        mode = body.get("mode") or memo.mode or "reflection"
+        if mode not in ("reflection", "research", "idea"):
+            mode = "reflection"
+        if not content:
+            return {"error": "メモ内容が必要です"}, 400
+
+        # 本文・モードを最新化(typed-but-not-yet-saved な状態でも確実に反映)
+        if memo.content != content:
+            memo.content = content
+        if memo.mode != mode:
+            memo.mode = mode
+        if hasattr(memo, "updated_at"):
+            try:
+                memo.updated_at = datetime.utcnow()
+            except Exception:
+                pass
+
+        # AI マップ生成
+        try:
+            map_data = generate_map_from_text(content, mode=mode) or {}
+        except Exception as e:
+            logger.error("generate_map_from_text failed: %s", e)
+            return {"error": "マップ生成に失敗しました"}, 500
+        nodes = map_data.get("nodes", []) or []
+        edges = map_data.get("edges", []) or []
+
+        # KnowledgeMap: 既存があれば上書き、なければ作成
+        km = KnowledgeMap.query.filter_by(memo_id=memo.id).first()
+        if km is None:
+            km = KnowledgeMap(memo_id=memo.id, nodes=nodes, edges=edges)
+            db.session.add(km)
+        else:
+            km.nodes = nodes
+            km.edges = edges
+
+        # MapHistory(新バージョン)を追加
+        latest = (
+            MapHistory.query.filter_by(memo_id=memo.id)
+            .order_by(MapHistory.version.desc())
+            .first()
+        )
+        new_version = (latest.version + 1) if latest else 1
+        db.session.add(MapHistory(
+            memo_id=memo.id, version=new_version,
+            nodes=nodes, edges=edges, action="create",
+        ))
+
+        db.session.commit()
+
+        return {"memo": _memo_to_dict_safe(memo), "map": km.to_dict()}
 
     # ==========================================================
     # POST /api/memos/blank - 空のメモを作成

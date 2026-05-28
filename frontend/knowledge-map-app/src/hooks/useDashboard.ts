@@ -514,6 +514,78 @@ export function useDashboard() {
   }, [handleExpandRelation]);
 
   // =============================================
+  // ★★★ 追加: ノード単位の周辺概念オンデマンド取得(再帰利用可)★★★
+  //   マップ生成時の一括取得(handleGenerateMap 内)はそのまま残す.
+  //   ここではユーザーが任意のノードを指定し、その周辺概念だけを
+  //   satellite ノードとして追加する. 追加された satellite を
+  //   「マップに追加」で通常ノードへ昇格させれば、そのノードからさらに
+  //   本ハンドラを呼べるため、周辺概念の再帰的な探索が可能になる.
+  // =============================================
+
+  const handleFetchSurrounding = useCallback(async (nodeId: string) => {
+    const cur = nodesRef.current;
+    const parent = cur.find((n) => n.id === nodeId);
+    if (!parent) return;
+    const parentLabel = parent.label || parent.data?.label || '';
+    if (!parentLabel) return;
+
+    // 既にマップ上にあるラベル(重複追加を防ぐ)
+    const existingLabels = new Set(
+      cur.map((n) => (n.label || n.data?.label || '')).filter(Boolean),
+    );
+
+    try {
+      const surrounding = await mapService.getSurroundingConcepts([parent]);
+      // キーは親ラベルのはずだが、バックエンドのキー揺れに備えフォールバック
+      const concepts: { label: string; relation: string }[] =
+        (surrounding as any)[parentLabel] ??
+        (Object.values(surrounding)[0] as any) ??
+        [];
+
+      const fresh = concepts.filter((c) => c.label && !existingLabels.has(c.label));
+      if (fresh.length === 0) {
+        loggingService.logActivity('surrounding_fetch_empty' as any, { parent: parentLabel }, memoRef.current?.id);
+        return;
+      }
+
+      const rawSat: MapNode[] = fresh.map((c, ci) => {
+        const sid = generateId('sat');
+        return {
+          id: sid, type: 'custom',
+          position: placeSatellitePos(parent.position, fresh.length, ci),
+          data: {
+            label: c.label, sentence: c.relation, extend_query: '',
+            status: 'satellite' as NodeStatus, isSatellite: true,
+            parentNodeId: parent.id, isRelation: false, satellites: [],
+          },
+          label: c.label, sentence: c.relation,
+        };
+      });
+      // 既存ノード(関連科目・他衛星含む)との重なりを解消してから配置
+      const satN = resolveOverlaps(rawSat, cur);
+      const satE: MapEdge[] = satN.map((s) => ({
+        id: generateId('sedge'), source: parent.id, target: s.id,
+        label: s.data?.sentence || '', isSatellite: true, isRelation: false,
+      }));
+
+      setNodes((p) => { const nn = [...p, ...satN]; nodesRef.current = nn; return nn; });
+      setEdges((p) => { const ne = [...p, ...satE]; edgesRef.current = ne; return ne; });
+      loggingService.logActivity('surrounding_fetch' as any, { parent: parentLabel, count: satN.length }, memoRef.current?.id);
+    } catch (e) {
+      console.warn('周辺概念の追加取得失敗:', e);
+    }
+  }, []);
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const d = (e as CustomEvent).detail;
+      if (d?.nodeId) handleFetchSurrounding(d.nodeId);
+    };
+    document.addEventListener('node-fetch-surrounding', handler);
+    return () => document.removeEventListener('node-fetch-surrounding', handler);
+  }, [handleFetchSurrounding]);
+
+  // =============================================
   // ★★★ v3.2.1 追加: 自動保存(タイトル + 本文 + マップ)★★★
   // =============================================
 
@@ -525,14 +597,18 @@ export function useDashboard() {
       const realN = nodesRef.current.filter((n) => !n.data?.isSatellite && !n.data?.isRelation);
       const realE = edgesRef.current.filter((e) => !e.isSatellite && !e.isRelation);
 
-      // ★ デバッグ: 何件保存しようとしているか(問題解決後は削除可)
-      console.log('💾 autosave → memoId:', memoRef.current.id,
-                  'nodes:', realN.length, 'edges:', realE.length);
+      const tasks: Promise<unknown>[] = [];
 
-      // マップ・タイトル・本文を並列で保存
-      const tasks: Promise<unknown>[] = [
-        mapService.updateMap(memoRef.current.id, realN, realE),
-      ];
+      // ★★★ 重要な修正 ★★★
+      // ノードが 0 件のときはマップを保存しない。
+      // write フェーズ・空メモ作成直後・本文/タイトル編集時にもデバウンス
+      // 自動保存が走るため、従来は生成済みマップを nodes:[] で上書きしてしまい、
+      // 「再読込するとマップが消える(getMap が nodes:[] を返す)」事象の原因に
+      // なっていた。空のときはマップ保存をスキップし、本文・タイトルのみ保存する。
+      if (realN.length > 0) {
+        tasks.push(mapService.updateMap(memoRef.current.id, realN, realE));
+      }
+
       // patchMemo は memoService に追加された関数. 失敗してもマップ保存だけは進める
       try {
         tasks.push(
@@ -544,7 +620,8 @@ export function useDashboard() {
       } catch (e) {
         // patchMemo が無い旧 memoService の場合は無視
       }
-      await Promise.all(tasks);
+
+      if (tasks.length > 0) await Promise.all(tasks);
 
       setSaveStatus('saved');
       setTimeout(() => setSaveStatus('idle'), 2000);
@@ -579,30 +656,38 @@ export function useDashboard() {
   }, [memoTitle, currentMemo, triggerAutoSaveDebounced]);
 
   // =============================================
-  // マップ生成(既存のまま、タイトル復元だけ追記)
+  // マップ生成
+  //   - currentMemo がある(?new=1 のブランクメモ等)場合は、そのメモに対して
+  //     生成・上書き保存する → 本文・タイトル・マップが同一メモに揃う
+  //   - currentMemo が無い場合は従来どおり createMemoWithMap で新規作成
   // =============================================
 
   const handleGenerateMap = useCallback(async (content: string) => {
     setLoading(true);
     relationCacheRef.current.clear();
     try {
-      // ★ 既に空メモが作られている場合は、それを使って PATCH + マップ生成にしたい
-      //   が、既存 createMemoWithMap は新メモを毎回作る. 既存挙動を壊さないため
-      //   そのまま使用. 既存 currentMemo は上書きされる(古い空メモはサーバに残る)
-      //   → サーバ側で「空メモがあれば再利用」する改善は後日.
-      const { memo, map } = await memoService.createMemoWithMap(content, mode);
+      // ★ 修正: 既にメモがあるなら新規作成せず、そのメモにマップを生成する
+      //   従来は常に createMemoWithMap を呼んでおり、ブランクメモ運用だと
+      //   「本文はメモA / マップはメモB」という二重化が発生していた.
+      let memo: Memo;
+      let map: any;
+      if (memoRef.current) {
+        const r = await memoService.generateMapForMemo(memoRef.current.id, content, mode);
+        memo = r.memo as Memo;
+        map = r.map;
+      } else {
+        const r = await memoService.createMemoWithMap(content, mode);
+        memo = r.memo as Memo;
+        map = r.map;
+      }
       setCurrentMemo(memo);
 
-      // ★ サーバが付けたタイトルがあれば反映、無ければ既存のタイトルを維持
+      // ★ サーバが付けたタイトルがあれば反映するが、ユーザーが既に編集していた
+      //   場合は上書きしない(編集中の値を保持).
       const serverTitle = (memo as any).title;
-      if (serverTitle) {
+      if (serverTitle && !titleRef.current) {
         setMemoTitle(serverTitle);
       }
-      // 注: 既にタイトルを編集していた場合はその値を維持したいので、
-      //     サーバ側のタイトルで上書きしない選択肢もある. ここでは
-      //     「空メモから来た」場合のみ既タイトル維持にしたい.
-      //     → currentMemo が存在し、かつタイトルがすでに入っていた場合は維持:
-      // (上のシンプル実装でも、デバウンス自動保存が後で patchMemo を投げるので最終的に同期する)
 
       const raw: MapNode[] = (map.nodes || []).map((n: any) => ({
         id: n.id, type: 'custom', position: { x: 0, y: 0 },
@@ -838,7 +923,7 @@ export function useDashboard() {
     handleModeChange, handleGenerateMap, handleTopicDetection,
     handleAddNode, handleSatelliteAdd, handleConnect,
     handleAutoSave, handleRollback, handleLogout,
-    handleExpandRelation, navigate,
+    handleExpandRelation, handleFetchSurrounding, navigate,
 
     // ★★★ v3.2.1 追加 ★★★
     memoTitle, setMemoTitle,

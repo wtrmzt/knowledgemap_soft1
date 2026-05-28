@@ -1,267 +1,167 @@
 /**
- * ログインページ (v3 完成版)
+ * LoginPage.tsx（差し替え版・修正済み）
  *
- * 機能:
- * - Google ログイン (VITE_GOOGLE_CLIENT_ID 設定時に有効)
- * - ID ベースログイン (バックエンド側で ALLOW_LEGACY_LOGIN により制御)
- * - デモユーザーログイン (バックエンド側で ALLOW_DEMO_LOGIN により制御)
+ * 修正点:
+ *   - authService の修正後シグネチャに合わせて呼び出しを調整
+ *     （login は {token,user} を返す。handleAuthRedirect も同様）
+ *   - Button の import 元は既存に合わせて調整可能（下記コメント参照）
  *
- * バックエンドの /api/auth/config から各機能の有効状態を取得し、
- * 動的に UI を表示・非表示する.
+ * 既存の「IDログイン / デモユーザー」に加えて「Googleでログイン」を追加。
+ * OAuthリダイレクトで戻ってきた場合は handleAuthRedirect() が
+ * 自動でトークン交換し、Consent へ遷移させる。
  */
-import React, { useState, useEffect, lazy, Suspense } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { LogIn, Zap } from 'lucide-react';
-import { Button, Input } from '@/components/ui';
-import { login, isAuthenticated } from '@/services/authService';
-import { apiGet } from '@/services/apiClient';
+import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
+// Button の import 元は既存プロジェクトに合わせる。
+// 既存が「@/components/ui」のバレル経由ならこのまま。直接なら下記に変更:
+//   import { Button } from "@/components/ui/Button";
+import { Button } from "@/components/ui";
+import {
+  login,
+  signInWithGoogle,
+  handleAuthRedirect,
+  isAuthenticated,
+} from "@/services/authService";
 
-// ===== Google ログイン =====
-const VITE_GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined;
-const VITE_GOOGLE_ALLOWED_HD = import.meta.env.VITE_GOOGLE_ALLOWED_HD as string | undefined;
+const DEMO_USER_ID = "demo_user";
 
-// 動的インポート: @react-oauth/google 未インストールでも落ちないように
-const LazyGoogleButton = lazy<React.ComponentType<any>>(async () => {
-  try {
-    const mod = await import('@react-oauth/google');
-    return {
-      default: ({ onSuccess, onError }: any) => (
-        <mod.GoogleLogin
-          onSuccess={onSuccess}
-          onError={onError}
-          hosted_domain={VITE_GOOGLE_ALLOWED_HD}
-          theme="outline"
-          size="large"
-          text="signin_with"
-          locale="ja"
-        />
-      ),
-    };
-  } catch {
-    return { default: () => null };
-  }
-});
-
-// ===== サーバ側機能フラグ =====
-interface AuthConfig {
-  google_login_enabled: boolean;
-  demo_login_enabled: boolean;
-  legacy_login_enabled: boolean;
-  google_client_id: string | null;
-}
-
-const DEFAULT_CONFIG: AuthConfig = {
-  google_login_enabled: false,
-  demo_login_enabled: true,
-  legacy_login_enabled: true,
-  google_client_id: null,
-};
-
-const LoginPage: React.FC = () => {
-  const [userId, setUserId] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [authConfig, setAuthConfig] = useState<AuthConfig>(DEFAULT_CONFIG);
-  const [configLoaded, setConfigLoaded] = useState(false);
+export default function LoginPage() {
   const navigate = useNavigate();
+  const [userId, setUserId] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
+  const [checking, setChecking] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  // 既にログイン済みならコンセントへ
+  // 初回マウント: OAuthリダイレクト帰りかどうかを確認し、帰りなら交換処理
   useEffect(() => {
-    if (isAuthenticated()) {
-      navigate('/consent');
-    }
-  }, [navigate]);
-
-  // サーバから機能フラグを取得
-  useEffect(() => {
-    apiGet<AuthConfig>('/auth/config')
-      .then((cfg) => {
-        setAuthConfig(cfg);
-      })
-      .catch((e) => {
-        // 取得失敗時はデフォルト(全部有効)で動作
-        console.warn('[LoginPage] auth config fetch failed:', e);
-      })
-      .finally(() => {
-        setConfigLoaded(true);
-      });
+    (async () => {
+      try {
+        if (isAuthenticated()) {
+          navigate("/consent");
+          return;
+        }
+        const result = await handleAuthRedirect();
+        if (result) {
+          navigate("/consent");
+          return;
+        }
+      } catch (e) {
+        console.error(e);
+        setError("Googleログインの処理に失敗しました。もう一度お試しください。");
+      } finally {
+        setChecking(false);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleLogin = async (id: string) => {
+  const handleGoogle = async () => {
+    setError(null);
+    setGoogleLoading(true);
+    try {
+      await signInWithGoogle(); // ここで Google へリダイレクト（戻りは useEffect で処理）
+    } catch (e) {
+      console.error(e);
+      setError("Googleログインを開始できませんでした。");
+      setGoogleLoading(false);
+    }
+  };
+
+  const handleIdLogin = async (id: string) => {
+    setError(null);
     setLoading(true);
-    setError('');
     try {
       await login(id);
-      navigate('/consent');
-    } catch (e: any) {
-      // サーバから返されたメッセージを優先表示
-      const msg = e?.body?.message || e?.message || 'ログインに失敗しました';
-      setError(msg);
+      navigate("/consent");
+    } catch (e) {
+      console.error(e);
+      setError("ログインに失敗しました。IDを確認してください。");
     } finally {
       setLoading(false);
     }
   };
 
-  const handleDemoLogin = () => {
-    // デモユーザー ID は固定. サーバ側 DEMO_USER_IDS と一致させる
-    handleLogin('demo_user');
-  };
-
-  // ===== Google ログイン =====
-  const handleGoogleSuccess = async (cred: { credential?: string }) => {
-    if (!cred.credential) {
-      setError('Googleログインの応答が不正です');
-      return;
-    }
-    setLoading(true);
-    setError('');
-    try {
-      const { loginWithGoogle } = await import('@/services/googleAuthService');
-      await loginWithGoogle(cred.credential);
-      navigate('/consent');
-    } catch (e: any) {
-      const msg = e?.body?.detail || e?.body?.message || e?.message || 'Googleログインに失敗しました';
-      setError(msg);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleGoogleError = () => {
-    setError('Googleログインに失敗しました。再度お試しください。');
-  };
-
-  // ===== UI 表示制御 =====
-  // VITE_GOOGLE_CLIENT_ID とサーバの両方で許可されている時のみ表示
-  const showGoogle = configLoaded
-    && authConfig.google_login_enabled
-    && Boolean(VITE_GOOGLE_CLIENT_ID);
-
-  const showLegacy = configLoaded && authConfig.legacy_login_enabled;
-  const showDemo = configLoaded && authConfig.demo_login_enabled;
-
-  // どれも有効でない異常状態
-  const nothingAvailable = configLoaded && !showGoogle && !showLegacy && !showDemo;
+  if (checking) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-surface">
+        <p className="text-gray-500">読み込み中…</p>
+      </div>
+    );
+  }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary-50 via-white to-accent-400/10">
-      <div className="w-full max-w-sm animate-fade-in">
-        {/* Logo */}
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-primary-700 text-white mb-4 shadow-lg">
-            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="12" cy="12" r="3" />
-              <circle cx="4" cy="8" r="2" />
-              <circle cx="20" cy="8" r="2" />
-              <circle cx="4" cy="16" r="2" />
-              <circle cx="20" cy="16" r="2" />
-              <path d="M6 8h4M14 8h4M6 16h4M14 16h4M12 9V7M12 15v2" />
-            </svg>
-          </div>
-          <h1 className="text-xl font-bold font-display text-surface-700">知識マップ</h1>
-          <p className="text-sm text-surface-400 mt-1">振り返り支援システム</p>
-        </div>
-
-        {/* Login card */}
-        <div className="bg-white rounded-2xl shadow-md border border-surface-200 p-6 space-y-4">
-
-          {nothingAvailable && (
-            <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded p-3">
-              ログイン手段が設定されていません。管理者に連絡してください。
-            </p>
-          )}
-
-          {/* ===== Google ログイン ===== */}
-          {showGoogle && (
-            <>
-              <div className="flex justify-center">
-                <Suspense fallback={
-                  <div className="h-10 w-full bg-surface-100 rounded animate-pulse" />
-                }>
-                  <LazyGoogleButton
-                    onSuccess={handleGoogleSuccess}
-                    onError={handleGoogleError}
-                  />
-                </Suspense>
-              </div>
-
-              {(showLegacy || showDemo) && (
-                <div className="relative">
-                  <div className="absolute inset-0 flex items-center">
-                    <div className="w-full border-t border-surface-200" />
-                  </div>
-                  <div className="relative flex justify-center text-[11px]">
-                    <span className="bg-white px-2 text-surface-400">または</span>
-                  </div>
-                </div>
-              )}
-            </>
-          )}
-
-          {/* ===== ID 入力ログイン ===== */}
-          {showLegacy && (
-            <>
-              <div>
-                <label className="block text-xs font-medium text-surface-600 mb-1.5">
-                  ユーザーID
-                </label>
-                <Input
-                  value={userId}
-                  onChange={(e) => setUserId(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && userId.trim() && handleLogin(userId.trim())}
-                  placeholder="IDを入力..."
-                  autoFocus={!showGoogle}
-                />
-              </div>
-
-              <Button
-                onClick={() => handleLogin(userId.trim())}
-                disabled={!userId.trim() || loading}
-                className="w-full"
-              >
-                <LogIn size={15} />
-                ログイン
-              </Button>
-            </>
-          )}
-
-          {error && (
-            <p className="text-xs text-red-500">{error}</p>
-          )}
-
-          {/* ===== デモユーザーログイン ===== */}
-          {showDemo && (
-            <>
-              {showLegacy && (
-                <div className="relative">
-                  <div className="absolute inset-0 flex items-center">
-                    <div className="w-full border-t border-surface-200" />
-                  </div>
-                  <div className="relative flex justify-center text-[11px]">
-                    <span className="bg-white px-2 text-surface-400">または</span>
-                  </div>
-                </div>
-              )}
-
-              <Button
-                variant="secondary"
-                onClick={handleDemoLogin}
-                disabled={loading}
-                className="w-full"
-              >
-                <Zap size={15} />
-                デモユーザーで開始
-              </Button>
-            </>
-          )}
-        </div>
-
-        <p className="text-[11px] text-surface-400 text-center mt-4">
-          学習支援研究プロジェクト
+    <div className="flex min-h-screen items-center justify-center bg-surface px-4">
+      <div className="w-full max-w-sm rounded-2xl bg-white p-8 shadow-lg">
+        <h1 className="mb-1 text-center text-2xl font-bold text-primary">
+          振り返り支援システム
+        </h1>
+        <p className="mb-6 text-center text-sm text-gray-500">
+          知識マップを使って学びを深めましょう
         </p>
+
+        {error && (
+          <div className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">
+            {error}
+          </div>
+        )}
+
+        {/* --- 推奨: Googleログイン --- */}
+        <button
+          onClick={handleGoogle}
+          disabled={googleLoading}
+          className="mb-4 flex w-full items-center justify-center gap-3 rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:opacity-60"
+        >
+          <GoogleIcon />
+          {googleLoading ? "リダイレクト中…" : "Googleでログイン"}
+        </button>
+
+        <div className="my-4 flex items-center gap-3 text-xs text-gray-400">
+          <span className="h-px flex-1 bg-gray-200" />
+          または
+          <span className="h-px flex-1 bg-gray-200" />
+        </div>
+
+        {/* --- 既存: IDログイン（デモ・検証用） --- */}
+        <div className="space-y-3">
+          <input
+            type="text"
+            value={userId}
+            onChange={(e) => setUserId(e.target.value)}
+            placeholder="ユーザーID"
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-primary focus:outline-none"
+          />
+          <Button
+            variant="primary"
+            size="md"
+            loading={loading}
+            disabled={!userId.trim()}
+            onClick={() => handleIdLogin(userId.trim())}
+            className="w-full"
+          >
+            IDでログイン
+          </Button>
+          <Button
+            variant="ghost"
+            size="md"
+            onClick={() => handleIdLogin(DEMO_USER_ID)}
+            className="w-full"
+          >
+            デモユーザーで開始
+          </Button>
+        </div>
       </div>
     </div>
   );
-};
+}
 
-export default LoginPage;
+function GoogleIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
+      <path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.71-1.57 2.68-3.89 2.68-6.62z" />
+      <path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.81.54-1.84.86-3.04.86-2.34 0-4.32-1.58-5.03-3.7H.96v2.33A9 9 0 0 0 9 18z" />
+      <path fill="#FBBC05" d="M3.97 10.72a5.4 5.4 0 0 1 0-3.44V4.95H.96a9 9 0 0 0 0 8.1l3.01-2.33z" />
+      <path fill="#EA4335" d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.58A9 9 0 0 0 .96 4.95l3.01 2.33C4.68 5.16 6.66 3.58 9 3.58z" />
+    </svg>
+  );
+}

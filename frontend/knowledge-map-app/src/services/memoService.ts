@@ -27,6 +27,25 @@ export async function createMemoWithMap(
   return apiPost<{ memo: Memo; map: KnowledgeMapData }>('/memos_with_map', { content, mode });
 }
 
+/**
+ * 既存メモに対してマップを生成(または再生成)し、そのメモに紐づく
+ * KnowledgeMap に保存する.
+ *
+ * 「?new=1 で空メモを作る → マップを生成」のフローで、生成が常に新規メモを
+ * 作ってしまい本文とマップが別メモに分かれる二重化を解消するための関数.
+ * バックエンド: POST /api/memos/<id>/generate_map (createMemoWithMap と同形レス).
+ */
+export async function generateMapForMemo(
+  memoId: number,
+  content: string,
+  mode: AppMode = 'reflection'
+): Promise<{ memo: Memo; map: KnowledgeMapData }> {
+  return apiPost<{ memo: Memo; map: KnowledgeMapData }>(
+    `/memos/${memoId}/generate_map`,
+    { content, mode },
+  );
+}
+
 export async function improveMemo(
   content: string,
   nodes: MapNode[],

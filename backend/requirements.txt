@@ -49,3 +49,30 @@ gevent>=23.9.0
 
 # (推奨) エラー監視 — 本番投入前に
 # sentry-sdk[flask]>=1.40.0
+
+# =====================================================================
+#  環境変数の追加分
+# =====================================================================
+
+# ---------------------------------------------------------------------
+# backend/.env （Flask バックエンド）に追加
+# ---------------------------------------------------------------------
+
+# Supabase プロジェクトURL（DB移行記録のプロジェクトIDより）
+SUPABASE_PROJECT_URL=https://klinnkfmoymowkilozzh.supabase.co
+
+# レガシー HS256 検証を使う場合のみ設定（ダッシュボード > Project Settings > API > JWT Secret）
+# 新しい署名鍵(JWKS)運用なら未設定でよい
+SUPABASE_JWT_SECRET=
+
+# 管理者にする Google アカウントのメール（カンマ区切り）
+ADMIN_EMAILS=flowergumi3@gmail.com
+
+
+# ---------------------------------------------------------------------
+# frontend/knowledge-map-app/.env （Vite フロントエンド）に追加
+#   ※ Vite では VITE_ プレフィックスが必須
+# ---------------------------------------------------------------------
+
+VITE_SUPABASE_URL=https://klinnkfmoymowkilozzh.supabase.co
+VITE_SUPABASE_ANON_KEY=（ダッシュボード > Project Settings > API > anon public key）

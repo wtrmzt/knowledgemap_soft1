@@ -9,7 +9,7 @@
 import React, { memo, useState, useCallback, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Handle, Position, type NodeProps, useStore } from 'reactflow';
-import { CheckCircle2, Plus, X, Search, ExternalLink, BookOpen, ChevronRight } from 'lucide-react';
+import { CheckCircle2, Plus, X, Search, ExternalLink, BookOpen, ChevronRight, Info, Sparkles } from 'lucide-react';
 import type { MapNodeData } from '@/types';
 
 const BORDER: Record<string, string> = {
@@ -70,12 +70,34 @@ const CustomNode: React.FC<NodeProps<MapNodeData>> = ({ data, selected, id, xPos
   const [popupPos, setPopupPos] = useState<{ x: number; y: number } | null>(null);
   const fp = getFloatParams(id, data);
 
-  // ===== ★ 左クリック → ポップアップ =====
-  // nodesDraggable={false} によりドラッグ干渉がないため onClick で確実に反応する
-  const handleClick = useCallback((e: React.MouseEvent) => {
+  // ===== ★ 左ボタン押下 → ポップアップ(toggle) =====
+  // 旧実装は onClick(= mousedown と mouseup が同一要素であることが条件)に
+  // 依存していたが、ノードが常時フロートアニメーションで微動するため、
+  // mouseup が別要素に流れて click が発火せず「クリックしても反応しない」
+  // 事象が多発していた。pointerdown は押下した瞬間に確実に発火するため解消する。
+  const handlePointerDown = useCallback((e: React.PointerEvent) => {
+    if (e.button !== 0) return;  // 左ボタンのみ(中央ボタンは onMouseDown 側で処理)
+    // 接続ドラッグ用ハンドル上の押下は無視し、手動接続操作を妨げない
+    if ((e.target as HTMLElement)?.classList?.contains('react-flow__handle')) return;
     e.stopPropagation();
     document.dispatchEvent(
       new CustomEvent('node-clicked', { detail: { nodeId: id } })
+    );
+  }, [id]);
+
+  // ⓘ ボタン: 必ず開く(force)— 詳細への明示的な入口
+  const handleInfoOpen = useCallback((e: React.PointerEvent) => {
+    e.stopPropagation();
+    document.dispatchEvent(
+      new CustomEvent('node-clicked', { detail: { nodeId: id, force: true } })
+    );
+  }, [id]);
+
+  // 周辺概念をこのノード単位でオンデマンド取得
+  const handleFetchSurrounding = useCallback(() => {
+    setShowPopup(false);
+    document.dispatchEvent(
+      new CustomEvent('node-fetch-surrounding', { detail: { nodeId: id } })
     );
   }, [id]);
 
@@ -91,17 +113,19 @@ const CustomNode: React.FC<NodeProps<MapNodeData>> = ({ data, selected, id, xPos
     );
   }, [id, transform]);
 
-  // ===== ★ ノードクリック: 自分→開く、他→閉じる =====
+  // ===== ★ ノードクリック: 自分→toggle(force時は必ず開く)、他→閉じる =====
   useEffect(() => {
     const handler = (e: Event) => {
-      const clickedId = (e as CustomEvent).detail?.nodeId;
+      const detail = (e as CustomEvent).detail;
+      const clickedId = detail?.nodeId;
       if (clickedId === id) {
         setShowPopup((prev) => {
-          if (!prev && nodeRef.current) {
+          const next = detail?.force ? true : !prev;
+          if (next && nodeRef.current) {
             const rect = nodeRef.current.getBoundingClientRect();
             setPopupPos({ x: rect.left + rect.width / 2, y: rect.bottom + 8 });
           }
-          return !prev;
+          return next;
         });
       } else {
         setShowPopup(false);
@@ -146,7 +170,7 @@ const CustomNode: React.FC<NodeProps<MapNodeData>> = ({ data, selected, id, xPos
     <>
       <div
         ref={nodeRef}
-        onClick={handleClick}
+        onPointerDown={handlePointerDown}
         onMouseDown={handleMouseDown}
         className={isSat || isRel ? 'node-float-slow node-appear' : 'node-float'}
         style={{
@@ -205,6 +229,22 @@ const CustomNode: React.FC<NodeProps<MapNodeData>> = ({ data, selected, id, xPos
             <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#f59f00', animation: 'pulse 1.5s ease-in-out infinite' }} />
           )}
           {isCandidate && <ChevronRight size={13} style={{ color: relColor, flexShrink: 0 }} />}
+          {!isCandidate && (
+            <button
+              onPointerDown={handleInfoOpen}
+              title="詳細を表示"
+              style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                width: 18, height: 18, flexShrink: 0, marginLeft: 2, padding: 0,
+                border: 'none', background: 'transparent', cursor: 'pointer',
+                color: '#adb5bd', borderRadius: 4, transition: 'color .15s, background .15s',
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.color = '#4263eb'; e.currentTarget.style.background = '#f0f4ff'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.color = '#adb5bd'; e.currentTarget.style.background = 'transparent'; }}
+            >
+              <Info size={13} />
+            </button>
+          )}
         </div>
 
         {isCandidate && data.sentence && (
@@ -303,6 +343,24 @@ const CustomNode: React.FC<NodeProps<MapNodeData>> = ({ data, selected, id, xPos
             >
               <Search size={13} /> Googleで検索
             </a>
+
+            {/* ★ 任意のノードから周辺概念を追加取得(衛星・候補ノードを除く)。
+                衛星は「マップに追加」で昇格後に取得可能 → 再帰的な探索ができる */}
+            {!isSat && !isCandidate && (
+              <button onClick={handleFetchSurrounding}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 5,
+                  fontSize: 12, fontWeight: 600, color: '#fff',
+                  padding: '7px 14px', borderRadius: 8,
+                  background: '#7048e8', border: 'none', cursor: 'pointer',
+                  transition: 'filter .15s',
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.filter = 'brightness(1.1)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.filter = 'none'; }}
+              >
+                <Sparkles size={13} /> 周辺概念を取得
+              </button>
+            )}
 
             {isSat && (
               <button onClick={handleAddToMap}
