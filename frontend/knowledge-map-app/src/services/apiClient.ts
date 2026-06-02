@@ -1,9 +1,16 @@
 /**
  * API通信の基盤ユーティリティ
  * fetch ラッパーとトークン管理
+ *
+ * 【変更点】
+ * API_BASE を環境変数から組み立てる形にした。
+ *   - 本番（フロントとバックが別ドメイン）: VITE_API_BASE_URL=https://<backend>.onrender.com
+ *     → API_BASE = "https://<backend>.onrender.com/api"
+ *   - ローカル開発: VITE_API_BASE_URL を設定しない or 空
+ *     → API_BASE = "/api"（Vite の proxy 経由で localhost:5000 へ）
  */
 
-const API_BASE = '/api';
+const API_BASE = `${import.meta.env.VITE_API_BASE_URL ?? ""}/api`;
 
 function getToken(): string | null {
   return localStorage.getItem('auth_token');
