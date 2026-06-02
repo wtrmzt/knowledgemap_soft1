@@ -6,9 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && npx vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "start": "serve -s dist -l $PORT"
   },
-  "start": "serve -s dist -l $PORT",
   "dependencies": {
     "@radix-ui/react-slot": "^1.0.2",
     "@react-oauth/google": "^0.12.1",
@@ -21,6 +21,7 @@
     "react-dom": "^18.3.1",
     "react-router-dom": "^6.28.0",
     "reactflow": "^11.11.4",
+    "serve": "^14.2.4",
     "tailwind-merge": "^2.6.0"
   },
   "devDependencies": {
