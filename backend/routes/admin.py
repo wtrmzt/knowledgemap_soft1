@@ -5,9 +5,15 @@ import json
 import zipfile
 from datetime import datetime, timezone
 
-from flask import Flask, jsonify, send_file
+from flask import Flask, jsonify, send_file, request, g
 from models import db, User, Memo, KnowledgeMap, MapHistory, UserActivityLog
-from auth import admin_required
+from auth import admin_required, token_required
+
+# AppSettings は models.py の更新が必要。未更新でもアプリ全体が起動できるよう防御的に取り込む。
+try:
+    from models import AppSettings
+except ImportError:
+    AppSettings = None
 
 
 def register_admin_routes(app: Flask):
@@ -59,6 +65,83 @@ def register_admin_routes(app: Flask):
                 "map": km.to_dict() if km else None,
             })
         return jsonify({"data": result})
+
+    # ===========================================================
+    # ▼▼▼ アプリ設定（プロンプト調整 / モードON-OFF / 介入度）▼▼▼
+    # ===========================================================
+
+    @app.route("/api/admin/settings", methods=["GET"])
+    @admin_required
+    def admin_get_settings():
+        """管理者向け: 全設定（プロンプト含む）を返す。"""
+        if AppSettings is None:
+            return jsonify({"error": "AppSettings モデルが見つかりません。models.py を更新版に差し替えてください。"}), 500
+        return jsonify({"settings": AppSettings.get_data()})
+
+    @app.route("/api/admin/settings", methods=["PUT"])
+    @admin_required
+    def admin_update_settings():
+        """管理者向け: 設定を更新。部分更新可（既定値で補完）。"""
+        if AppSettings is None:
+            return jsonify({"error": "AppSettings モデルが見つかりません。models.py を更新版に差し替えてください。"}), 500
+        body = request.get_json() or {}
+        incoming = body.get("settings", body)  # {settings:{...}} でも素の {...} でも可
+
+        # --- バリデーション（型・範囲を矯正して安全に保存）---
+        current = AppSettings.get_data()
+        new_data = {
+            "enabled_modes": dict(current["enabled_modes"]),
+            "intervention": dict(current["intervention"]),
+            "prompts": dict(current["prompts"]),
+        }
+
+        em = incoming.get("enabled_modes")
+        if isinstance(em, dict):
+            for k in ("reflection", "research", "idea"):
+                if k in em:
+                    new_data["enabled_modes"][k] = bool(em[k])
+            # 全モードOFFは不可（最低1つは有効に）
+            if not any(new_data["enabled_modes"].values()):
+                new_data["enabled_modes"]["reflection"] = True
+
+        iv = incoming.get("intervention")
+        if isinstance(iv, dict):
+            for k in ("topic_detection", "satellite", "relation"):
+                if k in iv:
+                    try:
+                        lv = int(iv[k])
+                    except (TypeError, ValueError):
+                        lv = new_data["intervention"][k]
+                    new_data["intervention"][k] = min(3, max(1, lv))
+
+        pr = incoming.get("prompts")
+        if isinstance(pr, dict):
+            for k in ("map_generation", "surrounding"):
+                if k in pr and pr[k] is not None:
+                    new_data["prompts"][k] = str(pr[k])[:8000]  # 上限を設けて保護
+
+        saved = AppSettings.set_data(new_data)
+        return jsonify({"settings": saved})
+
+    # ===========================================================
+    # ▼▼▼ 公開設定（ログインユーザーなら誰でも取得可。プロンプトは返さない）▼▼▼
+    #   ダッシュボードが各機能のゲーティングに使う。
+    # ===========================================================
+
+    @app.route("/api/settings", methods=["GET"])
+    @token_required
+    def public_settings():
+        if AppSettings is None:
+            # 未更新でもフロントが安全側（全有効・Lv3）にフォールバックできる既定値を返す
+            return jsonify({
+                "enabled_modes": {"reflection": True, "research": True, "idea": True},
+                "intervention": {"topic_detection": 3, "satellite": 3, "relation": 3},
+            })
+        data = AppSettings.get_data()
+        return jsonify({
+            "enabled_modes": data["enabled_modes"],
+            "intervention": data["intervention"],
+        })
 
     @app.route("/api/admin/export_csv", methods=["GET"])
     @admin_required

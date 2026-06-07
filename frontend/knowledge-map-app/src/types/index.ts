@@ -70,6 +70,12 @@ export interface MapNodeData {
   relationOriginId?: string;
   /** 候補ノードの場合: 科目名（キャッシュキー） */
   relationSubjectName?: string;
+  /** 候補ノードの場合: 展開時に接続される概念ラベルのプレビュー（項目1） */
+  relationPreview?: string[];
+  /** 展開済み関連ノードの「根（科目名）」からの距離。小さいほど根に近い（項目2） */
+  relationDepth?: number;
+  /** 候補ノードの関連科目介入度（2:科目名のみ / 3:部分木接続）。管理者機能D */
+  relationLevel?: number;
   /** 科目グループ名 */
   group?: string;
   [key: string]: unknown;
@@ -234,6 +240,62 @@ export interface AdminStats {
 // =============================================
 
 export type ReflectionPhase = 'write' | 'revise';
+
+// =============================================
+// アプリ設定（管理者機能D）
+// =============================================
+
+export type InterventionLevel = 1 | 2 | 3;
+
+export interface InterventionLevels {
+  /** リアルタイムトピック検知＆記述提案 (1:可視化なし / 2:状態可視化のみ / 3:提案カード) */
+  topic_detection: InterventionLevel;
+  /** 周辺概念(Satellite) (1:非表示 / 2:ラベルのみ / 3:フル提示) */
+  satellite: InterventionLevel;
+  /** 関連科目推薦 (1:非表示 / 2:科目名のみ / 3:部分木接続) */
+  relation: InterventionLevel;
+}
+
+export interface EnabledModes {
+  reflection: boolean;
+  research: boolean;
+  idea: boolean;
+}
+
+/** 公開設定（ダッシュボードのゲーティング用） */
+export interface PublicSettings {
+  enabled_modes: EnabledModes;
+  intervention: InterventionLevels;
+}
+
+/** 管理者向けフル設定（プロンプト含む） */
+export interface AppSettingsData extends PublicSettings {
+  prompts: {
+    map_generation: string;
+    surrounding: string;
+  };
+}
+
+// =============================================
+// 作業フロー フェーズ（項目3）
+//   create        : 初期マップ作成（メモ入力 → 生成）
+//   edit          : マップ編集（ノード追加・周辺概念など）
+//   connect_past  : 過去（基礎）科目の接続
+//   connect_future: 未来（発展）科目の接続
+// =============================================
+
+export type FlowPhase = 'create' | 'edit' | 'connect_past' | 'connect_future';
+
+export const FLOW_PHASE_ORDER: FlowPhase[] = [
+  'create', 'edit', 'connect_past', 'connect_future',
+];
+
+export const FLOW_PHASE_LABELS: Record<FlowPhase, string> = {
+  create: '初期マップ作成',
+  edit: 'マップ編集',
+  connect_past: '過去の科目接続',
+  connect_future: '未来の科目接続',
+};
 
 // =============================================
 // ロギング

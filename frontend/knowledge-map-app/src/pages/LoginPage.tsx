@@ -1,54 +1,74 @@
 /**
- * LoginPage.tsx（差し替え版・修正済み）
+ * LoginPage.tsx（ID + パスワードログイン版）
  *
- * 修正点:
- *   - authService の修正後シグネチャに合わせて呼び出しを調整
- *     （login は {token,user} を返す。handleAuthRedirect も同様）
- *   - Button の import 元は既存に合わせて調整可能（下記コメント参照）
- *
- * 既存の「IDログイン / デモユーザー」に加えて「Googleでログイン」を追加。
- * OAuthリダイレクトで戻ってきた場合は handleAuthRedirect() が
- * 自動でトークン交換し、Consent へ遷移させる。
+ * - 主方式: ユーザーID + パスワード
+ * - Google / デモ ボタンは /api/auth/config の結果に応じて出し分け
+ *   （既定では Google・デモともに非表示）
+ * - Enter キーでログイン送信に対応
  */
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-// Button の import 元は既存プロジェクトに合わせる。
-// 既存が「@/components/ui」のバレル経由ならこのまま。直接なら下記に変更:
-//   import { Button } from "@/components/ui/Button";
 import { Button } from "@/components/ui";
 import {
   login,
   signInWithGoogle,
   handleAuthRedirect,
   isAuthenticated,
+  isAdmin,
+  getAuthConfig,
+  type AuthConfig,
 } from "@/services/authService";
+
+/** ログイン後の遷移先: 管理者は管理者ダッシュボード、一般は同意画面へ */
+function postLoginPath(): string {
+  return isAdmin() ? "/admin" : "/consent";
+}
 
 const DEMO_USER_ID = "demo_user";
 
 export default function LoginPage() {
   const navigate = useNavigate();
   const [userId, setUserId] = useState("");
+  const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [checking, setChecking] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [authConfig, setAuthConfig] = useState<AuthConfig | null>(null);
 
-  // 初回マウント: OAuthリダイレクト帰りかどうかを確認し、帰りなら交換処理
   useEffect(() => {
     (async () => {
       try {
         if (isAuthenticated()) {
-          navigate("/consent");
+          navigate(postLoginPath());
           return;
         }
-        const result = await handleAuthRedirect();
-        if (result) {
-          navigate("/consent");
-          return;
+
+        // ログイン方式を取得（失敗してもパスワードログインは表示する）
+        let cfg: AuthConfig | null = null;
+        try {
+          cfg = await getAuthConfig();
+          setAuthConfig(cfg);
+        } catch {
+          setAuthConfig({
+            password_login_enabled: true,
+            demo_login_enabled: false,
+            legacy_login_enabled: false,
+            google_login_enabled: false,
+          });
+        }
+
+        // Google が有効な場合のみ OAuth リダイレクト帰りを処理
+        if (cfg?.google_login_enabled) {
+          const result = await handleAuthRedirect();
+          if (result) {
+            navigate(postLoginPath());
+            return;
+          }
         }
       } catch (e) {
         console.error(e);
-        setError("Googleログインの処理に失敗しました。もう一度お試しください。");
+        setError("ログイン処理の初期化に失敗しました。再読み込みしてください。");
       } finally {
         setChecking(false);
       }
@@ -56,11 +76,39 @@ export default function LoginPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const handlePasswordLogin = async () => {
+    setError(null);
+    setLoading(true);
+    try {
+      await login(userId.trim(), password);
+      navigate(postLoginPath());
+    } catch (e) {
+      console.error(e);
+      setError("ユーザーIDまたはパスワードが正しくありません。");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDemo = async () => {
+    setError(null);
+    setLoading(true);
+    try {
+      await login(DEMO_USER_ID);
+      navigate(postLoginPath());
+    } catch (e) {
+      console.error(e);
+      setError("デモログインに失敗しました。");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleGoogle = async () => {
     setError(null);
     setGoogleLoading(true);
     try {
-      await signInWithGoogle(); // ここで Google へリダイレクト（戻りは useEffect で処理）
+      await signInWithGoogle();
     } catch (e) {
       console.error(e);
       setError("Googleログインを開始できませんでした。");
@@ -68,19 +116,7 @@ export default function LoginPage() {
     }
   };
 
-  const handleIdLogin = async (id: string) => {
-    setError(null);
-    setLoading(true);
-    try {
-      await login(id);
-      navigate("/consent");
-    } catch (e) {
-      console.error(e);
-      setError("ログインに失敗しました。IDを確認してください。");
-    } finally {
-      setLoading(false);
-    }
-  };
+  const canSubmit = userId.trim().length > 0 && password.length > 0 && !loading;
 
   if (checking) {
     return (
@@ -106,49 +142,68 @@ export default function LoginPage() {
           </div>
         )}
 
-        {/* --- 推奨: Googleログイン --- */}
-        <button
-          onClick={handleGoogle}
-          disabled={googleLoading}
-          className="mb-4 flex w-full items-center justify-center gap-3 rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:opacity-60"
-        >
-          <GoogleIcon />
-          {googleLoading ? "リダイレクト中…" : "Googleでログイン"}
-        </button>
-
-        <div className="my-4 flex items-center gap-3 text-xs text-gray-400">
-          <span className="h-px flex-1 bg-gray-200" />
-          または
-          <span className="h-px flex-1 bg-gray-200" />
-        </div>
-
-        {/* --- 既存: IDログイン（デモ・検証用） --- */}
+        {/* --- 主方式: ID + パスワード --- */}
         <div className="space-y-3">
           <input
             type="text"
             value={userId}
             onChange={(e) => setUserId(e.target.value)}
             placeholder="ユーザーID"
+            autoComplete="username"
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-primary focus:outline-none"
+          />
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && canSubmit) handlePasswordLogin();
+            }}
+            placeholder="パスワード"
+            autoComplete="current-password"
             className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-primary focus:outline-none"
           />
           <Button
             variant="default"
             size="lg"
-            disabled={loading || !userId.trim()}
-            onClick={() => handleIdLogin(userId.trim())}
+            disabled={!canSubmit}
+            onClick={handlePasswordLogin}
             className="w-full"
           >
-            {loading ? "ログイン中…" : "IDでログイン"}
+            {loading ? "ログイン中…" : "ログイン"}
           </Button>
+        </div>
+
+        {/* --- 任意: Google ログイン（config で有効化時のみ）--- */}
+        {authConfig?.google_login_enabled && (
+          <>
+            <div className="my-4 flex items-center gap-3 text-xs text-gray-400">
+              <span className="h-px flex-1 bg-gray-200" />
+              または
+              <span className="h-px flex-1 bg-gray-200" />
+            </div>
+            <button
+              onClick={handleGoogle}
+              disabled={googleLoading}
+              className="flex w-full items-center justify-center gap-3 rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:opacity-60"
+            >
+              <GoogleIcon />
+              {googleLoading ? "リダイレクト中…" : "Googleでログイン"}
+            </button>
+          </>
+        )}
+
+        {/* --- 任意: デモログイン（config で有効化時のみ）--- */}
+        {authConfig?.demo_login_enabled && (
           <Button
             variant="ghost"
             size="lg"
-            onClick={() => handleIdLogin(DEMO_USER_ID)}
-            className="w-full"
+            onClick={handleDemo}
+            className="mt-3 w-full"
           >
             デモユーザーで開始
           </Button>
-        </div>
+        )}
       </div>
     </div>
   );

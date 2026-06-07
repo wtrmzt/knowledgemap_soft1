@@ -32,7 +32,7 @@ class Config:
 
     SIMILARITY_THRESHOLD = 0.0
 
-    # --- CSV列名設定 ---
+    # --- CSV列名設定 --- 
     COL_ID = 'id'
     COL_LABEL = 'label'
     COL_SENTENCE = 'sentence'
@@ -230,9 +230,45 @@ def find_most_similar_academic_field(input_node: dict, gakumon_df: pd.DataFrame)
 
 def find_top_related_subjects(input_node: dict, academic_field: pd.Series, subject_df: pd.DataFrame, input_year: int, op: callable) -> pd.DataFrame:
     logging.info(f"関連科目を抽出 (学年条件: {op.__name__} {input_year})...")
+    # まず方向条件（gt=未来 / lt=過去）で絞り込む
     filtered_subjects = subject_df[op(subject_df[Config.COL_YEAR], input_year)].copy()
+
+    # ★★★ 項目4 + 修正: 接続学年を「1つ隣の“存在する”学年階層」に限定 ★★★
+    #   学年は飛び飛び（例: データ上 1,2,3,5 で 4 が無い）のため、単純な input_year±1 だと
+    #   未来側が空になる（3 の +1=4 が存在しない）。そこで実データに存在する学年のうち、
+    #   現在学年のすぐ上 / すぐ下の階層だけを採用する。
+    #     未来(op=gt): input_year より大きい中で最小の学年 == next_up
+    #     過去(op=lt): input_year より小さい中で最大の学年 == next_down
+    try:
+        available_years = sorted({
+            int(y) for y in subject_df[Config.COL_YEAR].dropna().tolist()
+        })
+    except Exception:
+        available_years = []
+
+    if op is operator.gt:
+        higher = [y for y in available_years if y > input_year]
+        if higher:
+            next_up = min(higher)
+            filtered_subjects = filtered_subjects[
+                filtered_subjects[Config.COL_YEAR] == next_up
+            ].copy()
+            logging.info(f"未来側: 隣接する上位学年 {next_up} に限定")
+        else:
+            filtered_subjects = filtered_subjects.iloc[0:0].copy()
+    elif op is operator.lt:
+        lower = [y for y in available_years if y < input_year]
+        if lower:
+            next_down = max(lower)
+            filtered_subjects = filtered_subjects[
+                filtered_subjects[Config.COL_YEAR] == next_down
+            ].copy()
+            logging.info(f"過去側: 隣接する下位学年 {next_down} に限定")
+        else:
+            filtered_subjects = filtered_subjects.iloc[0:0].copy()
+
     if filtered_subjects.empty: 
-        logging.warning("指定された学年条件に合う科目がありません。")
+        logging.warning("指定された学年条件(隣接階層)に合う科目がありません。")
         return pd.DataFrame()
         
     academic_field_node = {'rep_qid': None, 'all_qids': academic_field.get(Config.COL_ALL_QIDS, set()), 'neighbor_qids': academic_field.get(Config.COL_NEIGHBORING_QIDS, set()), 'embedding': academic_field.get(Config.COL_EMBEDDING)}

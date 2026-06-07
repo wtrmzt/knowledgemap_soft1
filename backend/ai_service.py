@@ -37,6 +37,23 @@ def _get_client():
     return _client
 
 
+def _get_prompt_overrides() -> dict:
+    """
+    管理者が設定したプロンプト上書きを取得する（管理者機能）。
+    DB/アプリコンテキストが無い場合でも落ちないよう握りつぶす。
+    返り値: {"map_generation": str, "surrounding": str}（未設定なら空文字）。
+    """
+    try:
+        from models import AppSettings
+        prompts = AppSettings.get_data().get("prompts", {})
+        return {
+            "map_generation": (prompts.get("map_generation") or "").strip(),
+            "surrounding": (prompts.get("surrounding") or "").strip(),
+        }
+    except Exception:
+        return {"map_generation": "", "surrounding": ""}
+
+
 # =============================================
 # モード別プロンプト
 # =============================================
@@ -91,6 +108,10 @@ def generate_map_from_text(text: str, mode: str = "reflection") -> dict:
     system_prompt = _MODE_SYSTEM_PROMPTS.get(
         mode, "知識マップをJSON形式で生成してください。"
     )
+    # ★ 管理者がプロンプトを設定していれば、既定の前に追記して反映する
+    override = _get_prompt_overrides().get("map_generation", "")
+    if override:
+        system_prompt = f"{override}\n\n{system_prompt}"
     try:
         client = _get_client()
         response = client.chat.completions.create(
@@ -172,6 +193,10 @@ def generate_surrounding_concepts(nodes: list) -> dict:
         "以下のJSON形式で出力してください:\n"
         '{"概念名1":[{"label":"周辺概念A","relation":"140字以内の説明"}],"概念名2":[...]}'
     )
+    # ★ 管理者がプロンプトを設定していれば前置きとして反映する
+    override = _get_prompt_overrides().get("surrounding", "")
+    if override:
+        prompt = f"{override}\n\n{prompt}"
     try:
         client = _get_client()
         response = client.chat.completions.create(

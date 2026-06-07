@@ -7,7 +7,6 @@
 import React, { useState, useCallback, useRef } from 'react';
 import { Sparkles, Plus, Loader2 } from 'lucide-react';
 import { Button, Textarea } from '@/components/ui';
-import { WritingProgress } from './WritingProgress';
 import { WritingSuggestions } from './WritingSuggestions';
 import { cn } from '@/utils';
 import type { AppMode, ReflectionPhase, WritingSuggestion, MapNode } from '@/types';
@@ -43,7 +42,7 @@ export const ReflectionSheet: React.FC<Props> = (props) => {
   const {
     phase, mode, memoContent, onMemoChange, onGenerateMap,
     onAddNodeRequest, onRequestTopicDetection, loading, nodes,
-    realNodeCount, describedLabels, currentlyWriting, nextSuggestions, detectingTopics,
+    realNodeCount, describedLabels, nextSuggestions, detectingTopics,
   } = props;
 
   const [nodeKw, setNodeKw] = useState('');
@@ -81,16 +80,6 @@ export const ReflectionSheet: React.FC<Props> = (props) => {
           {phase === 'write' ? 'テキストを入力してマップを生成' : 'マップを参照しながら振り返りを深めましょう'}
         </p>
       </div>
-
-      {phase === 'revise' && (
-        <WritingProgress
-          totalNodes={totalNodes}
-          describedCount={describedLabels.length}
-          currentlyWriting={currentlyWriting}
-          describedLabels={describedLabels}
-          detecting={detectingTopics}
-        />
-      )}
 
       <div className="flex-1 p-4 overflow-y-auto space-y-3">
         <Textarea

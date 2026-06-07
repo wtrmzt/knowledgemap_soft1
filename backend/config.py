@@ -7,17 +7,27 @@
 - Redis / Google ログイン / レート制限 / サムネイル用設定を追加(全て optional)
 - 既存の `from_object(Config)` で読み込まれる挙動を維持
 
-【今回の変更点】
-- ALLOWED_EMAILS / ALLOWED_EMAIL_DOMAINS を追加（ログイン許可ユーザー制限）
-- resolve_is_admin() を整理（モジュールレベルで Config を参照する形に統一）
-- 末尾の重複モジュールレベル定義（デッドコード）を削除
+【今回の変更点（許可ユーザー + パスワードログイン化）】
+- ALLOW_PASSWORD_LOGIN を追加（ID + パスワードでのログインを主方式に）
+- 既定値をセキュアに変更:
+    ALLOW_DEMO_LOGIN  : true  -> false
+    ALLOW_LEGACY_LOGIN: true  -> false   （ID のみの自動作成ログインを無効化）
+    FEATURE_GOOGLE_LOGIN: true -> false  （コードは残すがフラグで停止）
+- ログイン試行回数ロック（ブルートフォース対策）の設定を追加
+- ALLOWED_EMAILS / ALLOWED_EMAIL_DOMAINS は Google 用として温存（パスワード方式では未使用）
 """
 import os
 from datetime import timedelta
 from dotenv import load_dotenv
-load_dotenv()  # ← これを追加(import osより前でもOK)
+load_dotenv()
 
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
+
+
+def _as_bool(value: str, default: bool = False) -> bool:
+    if value is None or value == "":
+        return default
+    return str(value).strip().lower() in ("1", "true", "yes", "on")
 
 
 class Config:
@@ -48,16 +58,13 @@ class Config:
         instance_dir = os.path.join(BASE_DIR, "instance")
         os.makedirs(instance_dir, exist_ok=True)
         db_path = os.path.join(instance_dir, "local.db")
-        # Windows のバックスラッシュは / に正規化（SQLite URI 用）
         return "sqlite:///" + db_path.replace("\\", "/")
 
-    # ★ from_object() で読み込まれるよう、クラス属性として SQLALCHEMY_DATABASE_URI を定義
-    SQLALCHEMY_DATABASE_URI = None  # __init_subclass__ より前に定義が必要なのでプレースホルダ
+    SQLALCHEMY_DATABASE_URI = None  # 後段で実値を設定
 
-    # ★ 追加: コネクションプールの安定化 ★(既存設定そのまま)
     SQLALCHEMY_ENGINE_OPTIONS = {
-        "pool_pre_ping": True,   # 接続使用前に生存確認(SELECT 1)
-        "pool_recycle": 280,     # 280秒ごとに接続をリサイクル(Render の切断より短く)
+        "pool_pre_ping": True,
+        "pool_recycle": 280,
         "pool_size": int(os.environ.get("DB_POOL_SIZE", "5")),
         "max_overflow": int(os.environ.get("DB_MAX_OVERFLOW", "10")),
     }
@@ -71,63 +78,56 @@ class Config:
     FALLBACK_HEAVY_RELATION = os.environ.get('FALLBACK_HEAVY_RELATION', 'true')
 
     # ===========================================================
-    # ▼▼▼ v3 で追加した設定(すべて optional)▼▼▼
+    # v3 追加（すべて optional）
     # ===========================================================
-
-    # --- Redis (任意。未設定なら in-memory フォールバック) ---
-    REDIS_URL = os.environ.get("REDIS_URL", "")  # 例: "redis://localhost:6379/0"
-
-    # --- OpenAI レート制限(100名同時接続時の保護)---
+    REDIS_URL = os.environ.get("REDIS_URL", "")
     OPENAI_RPM_LIMIT = int(os.environ.get("OPENAI_RPM_LIMIT", "800"))
     OPENAI_TPM_LIMIT = int(os.environ.get("OPENAI_TPM_LIMIT", "160000"))
-
-    # detect_topics 等のキャッシュ TTL(秒)
     OPENAI_CACHE_TTL = int(os.environ.get("OPENAI_CACHE_TTL", "60"))
 
-    # ===========================================================
-    # ▼▼▼ Supabase Auth + 認証制御 ▼▼▼
-    # ===========================================================
-
-    # --- Supabase Auth（Google ログイン用） ---
-    # 例: https://klinnkfmoymowkilozzh.supabase.co
+    # --- Supabase Auth（Google ログイン用。今回は既定OFF）---
     SUPABASE_PROJECT_URL = os.environ.get("SUPABASE_PROJECT_URL", "")
-    # レガシー HS256 検証を使う場合のみ設定（ダッシュボードの JWT Secret）
     SUPABASE_JWT_SECRET = os.environ.get("SUPABASE_JWT_SECRET", "")
 
-    # --- Google ログイン(旧 @react-oauth/google 用。任意) ---
     GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
-    # 教育機関ドメイン制限(例: "uec.ac.jp"). 空なら制限なし（旧実装の名残）
     GOOGLE_ALLOWED_HD = os.environ.get("GOOGLE_ALLOWED_HD", "") or None
 
-    # --- ★ログインを許可するメール（許可ユーザー制限）---
-    # 空のとき: 全ユーザー許可（現状の挙動）
-    # 設定時: このリストにあるメールのみログイン可。それ以外は 403
+    # --- Google ログイン用の許可メール（パスワード方式では未使用・温存）---
     ALLOWED_EMAILS = set(
         e.strip().lower() for e in os.environ.get("ALLOWED_EMAILS", "").split(",") if e.strip()
     )
-    # --- ★ドメイン単位で許可（任意。ALLOWED_EMAILS と併用可）---
-    # 例: "uec.ac.jp,edu.cc.uec.ac.jp"。@ は付けても付けなくても可。空なら無効。
     ALLOWED_EMAIL_DOMAINS = set(
         d.strip().lower().lstrip("@") for d in os.environ.get("ALLOWED_EMAIL_DOMAINS", "").split(",") if d.strip()
     )
-
-    # --- 管理者にするメール(カンマ区切り) ---
-    # 大文字小文字を無視して比較するため lower() で正規化
     ADMIN_EMAILS = set(
         e.strip().lower() for e in os.environ.get("ADMIN_EMAILS", "").split(",") if e.strip()
     )
 
-    # --- デモユーザーログイン ---
-    ALLOW_DEMO_LOGIN = os.environ.get("ALLOW_DEMO_LOGIN", "true").lower() == "true"
+    # ===========================================================
+    # ▼▼▼ ログイン方式の制御（今回の主変更） ▼▼▼
+    # ===========================================================
+
+    # --- ★ パスワードログイン（ID + パスワード）= 主方式 ---
+    # 事前登録（seed_users.py）したユーザーのみログイン可。未知IDは自動作成しない。
+    ALLOW_PASSWORD_LOGIN = _as_bool(os.environ.get("ALLOW_PASSWORD_LOGIN"), True)
+
+    # --- ログイン試行回数ロック（ブルートフォース対策）---
+    LOGIN_MAX_FAILED_ATTEMPTS = int(os.environ.get("LOGIN_MAX_FAILED_ATTEMPTS", "5"))
+    LOGIN_LOCKOUT_SECONDS = int(os.environ.get("LOGIN_LOCKOUT_SECONDS", "300"))      # 5分ロック
+    LOGIN_ATTEMPT_WINDOW_SECONDS = int(os.environ.get("LOGIN_ATTEMPT_WINDOW_SECONDS", "300"))
+
+    # --- デモユーザーログイン（既定 OFF）---
+    ALLOW_DEMO_LOGIN = _as_bool(os.environ.get("ALLOW_DEMO_LOGIN"), False)
     DEMO_USER_IDS = set(
         s.strip() for s in os.environ.get("DEMO_USER_IDS", "demo_user,demo").split(",")
         if s.strip()
     )
 
-    # --- 任意 ID ログイン(レガシー) ---
-    ALLOW_LEGACY_LOGIN = os.environ.get("ALLOW_LEGACY_LOGIN", "true").lower() == "true"
+    # --- レガシー ID-only ログイン（パスワード無しの自動作成。既定 OFF）---
+    # ALLOW_PASSWORD_LOGIN=true の間は使用されない（パスワード方式が優先）。
+    ALLOW_LEGACY_LOGIN = _as_bool(os.environ.get("ALLOW_LEGACY_LOGIN"), False)
 
-    # --- 管理者扱いする ID リスト(レガシー互換) ---
+    # --- 管理者扱いする ID リスト ---
     ADMIN_USER_IDS = set(
         s.strip() for s in os.environ.get("ADMIN_USER_IDS", "admin,researcher,admin_user").split(",")
         if s.strip()
@@ -143,13 +143,13 @@ class Config:
     )
 
     # --- 機能フラグ ---
-    FEATURE_GOOGLE_LOGIN = os.environ.get("FEATURE_GOOGLE_LOGIN", "true").lower() == "true"
-    FEATURE_MAPS_LIST = os.environ.get("FEATURE_MAPS_LIST", "true").lower() == "true"
-    FEATURE_EVENT_LOG = os.environ.get("FEATURE_EVENT_LOG", "true").lower() == "true"
-    FEATURE_RATE_LIMIT = os.environ.get("FEATURE_RATE_LIMIT", "true").lower() == "true"
+    # ★ Google ログインは既定 OFF（コードは残す。env で true にすれば復活）
+    FEATURE_GOOGLE_LOGIN = _as_bool(os.environ.get("FEATURE_GOOGLE_LOGIN"), False)
+    FEATURE_MAPS_LIST = _as_bool(os.environ.get("FEATURE_MAPS_LIST"), True)
+    FEATURE_EVENT_LOG = _as_bool(os.environ.get("FEATURE_EVENT_LOG"), True)
+    FEATURE_RATE_LIMIT = _as_bool(os.environ.get("FEATURE_RATE_LIMIT"), True)
 
 
-# ★ Config クラス定義完了後に SQLALCHEMY_DATABASE_URI を実際の値で上書き
 Config.SQLALCHEMY_DATABASE_URI = Config.get_database_uri()
 
 
@@ -172,7 +172,6 @@ def resolve_is_admin(app_user_id: str, email: str | None = None) -> bool:
         return True
     if email and email.lower() in Config.ADMIN_EMAILS:
         return True
-    # app_user_id 自体がメール（Googleログイン）の場合にも対応
     if app_user_id and app_user_id.lower() in Config.ADMIN_EMAILS:
         return True
     return False
@@ -180,20 +179,17 @@ def resolve_is_admin(app_user_id: str, email: str | None = None) -> bool:
 
 def is_email_allowed(email: str | None) -> bool:
     """
-    ログインを許可するメールかどうか判定する。
-      - ALLOWED_EMAILS / ALLOWED_EMAIL_DOMAINS が両方空 → 全員許可（現状維持）
-      - どちらか設定あり → メール または ドメイン が一致すれば許可
+    （Google ログイン用）ログインを許可するメールかどうか判定する。
+    パスワード方式では使用しないが、Google を再有効化した時のために温存。
     """
     allowed_emails = Config.ALLOWED_EMAILS
     allowed_domains = Config.ALLOWED_EMAIL_DOMAINS
 
     if not allowed_emails and not allowed_domains:
         return True
-
     if not email:
         return False
     email = email.lower()
-
     if email in allowed_emails:
         return True
     domain = email.split("@")[-1] if "@" in email else ""

@@ -2,8 +2,10 @@
  * 管理者サービス
  * 統計情報・ユーザー一覧・統合マップ・データエクスポート
  */
-import { apiGet, apiGetBlob } from './apiClient';
-import type { AdminStats, User, MapNode, MapEdge, Memo, KnowledgeMapData } from '@/types';
+import { apiGet, apiGetBlob, apiPut } from './apiClient';
+import type {
+  AdminStats, User, MapNode, MapEdge, Memo, KnowledgeMapData, AppSettingsData,
+} from '@/types';
 
 export async function getStats(): Promise<AdminStats> {
   return apiGet<AdminStats>('/admin/stats');
@@ -35,4 +37,18 @@ export async function exportCsv(): Promise<void> {
   a.download = `export_${new Date().toISOString().slice(0, 10)}.zip`;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+// ===== 設定（プロンプト調整 / モードON-OFF / 介入度）=====
+
+export async function getSettings(): Promise<AppSettingsData> {
+  const data = await apiGet<{ settings: AppSettingsData }>('/admin/settings');
+  return data.settings;
+}
+
+export async function updateSettings(
+  settings: AppSettingsData
+): Promise<AppSettingsData> {
+  const data = await apiPut<{ settings: AppSettingsData }>('/admin/settings', { settings });
+  return data.settings;
 }

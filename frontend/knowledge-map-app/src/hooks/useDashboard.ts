@@ -14,15 +14,22 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   isAuthenticated, isAdmin, logout, getCurrentUserId,
-  memoService, mapService, loggingService,
+  memoService, mapService, loggingService, settingsService,
 } from '@/services';
 import { computeRadialLayout, generateId } from '@/utils';
+import { relationMeta } from '@/utils/relationMeta';
 import type {
-  AppMode, ReflectionPhase, MapNode, MapEdge, Memo,
+  AppMode, ReflectionPhase, FlowPhase, MapNode, MapEdge, Memo,
   NodeStatus, SurroundingConceptsMap, WritingSuggestion,
   TemporalRelationResponse, RelationMapNode, RelationMapEdge,
-  RelationSubGraphCache,
+  RelationSubGraphCache, PublicSettings, EnabledModes, InterventionLevels,
 } from '@/types';
+import { FLOW_PHASE_ORDER } from '@/types';
+
+const DEFAULT_SETTINGS: PublicSettings = {
+  enabled_modes: { reflection: true, research: true, idea: true },
+  intervention: { topic_detection: 3, satellite: 3, relation: 3 },
+};
 
 // =============================================
 // 配置ユーティリティ(既存のまま、無変更)
@@ -134,6 +141,33 @@ function expandSubGraph(
   const spacing = 350;
   const status: NodeStatus = direction === 'past' ? 'relation_past' : 'relation_future';
 
+  // ★ 項目2: 「根（科目名 = 接続の入口ノード = rawNodes[0]）」からの距離(深さ)を
+  //   無向BFSで算出。根に近いほど depth が小さい。
+  const depthMap = new Map<string, number>();
+  if (rawNodes.length > 0) {
+    const adjacency = new Map<string, string[]>();
+    rawNodes.forEach((n) => adjacency.set(n.id, []));
+    for (const e of rawEdges) {
+      if (adjacency.has(e.source)) adjacency.get(e.source)!.push(e.target);
+      if (adjacency.has(e.target)) adjacency.get(e.target)!.push(e.source);
+    }
+    const rootId = rawNodes[0].id;
+    depthMap.set(rootId, 0);
+    let frontier = [rootId];
+    while (frontier.length > 0) {
+      const nextF: string[] = [];
+      for (const cur of frontier) {
+        const d = depthMap.get(cur) ?? 0;
+        for (const nb of adjacency.get(cur) || []) {
+          if (!depthMap.has(nb)) { depthMap.set(nb, d + 1); nextF.push(nb); }
+        }
+      }
+      frontier = nextF;
+    }
+    // 未接続ノードは末端扱い
+    rawNodes.forEach((n) => { if (!depthMap.has(n.id)) depthMap.set(n.id, rawNodes.length); });
+  }
+
   const rawMapped: MapNode[] = rawNodes.map((n, i) => ({
     id: generateId('rn'),
     type: 'custom',
@@ -150,6 +184,7 @@ function expandSubGraph(
       isRelation: true,
       relationDirection: direction,
       relationOriginId: originNodeId,
+      relationDepth: depthMap.get(n.id) ?? 0,
       group: subjectName,
       satellites: [],
     },
@@ -158,6 +193,11 @@ function expandSubGraph(
   }));
 
   const nodes = resolveOverlaps(rawMapped, existingNodes);
+
+  // ★ FB2: 変換で data.relationDepth が落ちても効くよう、ストアにも深さを保存
+  rawNodes.forEach((rn, i) => {
+    if (nodes[i]) relationMeta.setDepth(nodes[i].id, depthMap.get(rn.id) ?? 0);
+  });
 
   const oldToNew = new Map<string, string>();
   rawNodes.forEach((n, i) => { oldToNew.set(n.id, nodes[i].id); });
@@ -233,6 +273,8 @@ export function useDashboard() {
 
   const [mode, setMode] = useState<AppMode>('reflection');
   const [phase, setPhase] = useState<ReflectionPhase>('write');
+  // ★★★ 項目3: 作業フローのフェーズ ★★★
+  const [flowPhase, setFlowPhase] = useState<FlowPhase>('create');
   const [memoContent, setMemoContent] = useState('');
   const [currentMemo, setCurrentMemo] = useState<Memo | null>(null);
   const [nodes, setNodes] = useState<MapNode[]>([]);
@@ -266,14 +308,57 @@ export function useDashboard() {
   const [selectedNodeLabel, setSelectedNodeLabel] = useState<string | null>(null);
   const [showHistory, setShowHistory] = useState(false);
 
+  // ★ A対策: 接続フェーズで候補0件のとき理由を出す通知（無言で終わらせない）
+  const [relationNotice, setRelationNotice] = useState<string | null>(null);
+
   const relationCacheRef = useRef<Map<string, RelationSubGraphCache>>(new Map());
   const topicTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ★★★ 項目3: flowPhase の最新値 ref + 関連科目APIレスポンスのキャッシュ ★★★
+  const flowPhaseRef = useRef(flowPhase);
+  useEffect(() => { flowPhaseRef.current = flowPhase; }, [flowPhase]);
+  const relationApiCacheRef = useRef<{ key: string; data: TemporalRelationResponse } | null>(null);
+
+  // ★★★ 管理者機能D: 公開設定（モードON/OFF・介入度）★★★
+  const [settings, setSettings] = useState<PublicSettings>(DEFAULT_SETTINGS);
+  const interventionRef = useRef<InterventionLevels>(DEFAULT_SETTINGS.intervention);
+  useEffect(() => { interventionRef.current = settings.intervention; }, [settings]);
+  useEffect(() => {
+    settingsService.getPublicSettings().then(setSettings).catch(() => {});
+  }, []);
+
+  // 関連科目 Lv1 のときは「科目接続フェーズ」を流れから外す
+  const flowPhases: FlowPhase[] =
+    settings.intervention.relation <= 1 ? ['create', 'edit'] : FLOW_PHASE_ORDER;
+  const effectiveOrderRef = useRef<FlowPhase[]>(FLOW_PHASE_ORDER);
+  useEffect(() => {
+    effectiveOrderRef.current =
+      interventionRef.current.relation <= 1 ? ['create', 'edit'] : FLOW_PHASE_ORDER;
+  }, [settings]);
+
+  // 現在のモードが無効化されたら、有効な先頭モードへ自動切替
+  useEffect(() => {
+    const em = settings.enabled_modes;
+    if (!em[mode]) {
+      const fallback = (['reflection', 'research', 'idea'] as AppMode[]).find((m) => em[m]);
+      if (fallback) setMode(fallback);
+    }
+  }, [settings, mode]);
 
   // ★★★ v3.2.1 追加: 自動保存のデバウンスタイマー ★★★
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ★★★ v3.2.1 追加: handleCreateBlankMemo の二重実行ガード ★★★
   const isCreatingBlankRef = useRef<boolean>(false);
+
+  // ★★★ 項目6: どのハンドラからも呼べる安定した保存スケジューラ ★★★
+  //   handleAutoSave 本体はこの下で定義されるため、ref 経由で最新版を呼ぶ。
+  const autoSaveFnRef = useRef<() => void | Promise<void>>(() => {});
+  const scheduleAutoSave = useCallback(() => {
+    if (!memoRef.current) return;
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    autoSaveTimerRef.current = setTimeout(() => { void autoSaveFnRef.current(); }, 1200);
+  }, []);
 
   const getLatestRealLabels = useCallback((): string[] => {
     return nodesRef.current
@@ -282,6 +367,12 @@ export function useDashboard() {
   }, []);
 
   const runTopicDetection = useCallback(async (text: string) => {
+    // ★ 管理者機能D: トピック検知の介入度
+    const level = interventionRef.current.topic_detection;
+    if (level <= 1) {
+      // Lv1: 可視化なし。入力と連動しない（状態・提案を出さない）。
+      return;
+    }
     const labels = getLatestRealLabels();
     if (labels.length === 0 || !text.trim()) return;
     setDetecting(true);
@@ -291,19 +382,26 @@ export function useDashboard() {
       labels.forEach((l) => (st[l] = 'default'));
       (r.described || []).forEach((l: string) => { if (st[l] !== undefined) st[l] = 'described'; });
       if (r.currently_writing && st[r.currently_writing] !== undefined) st[r.currently_writing] = 'currently_writing';
-      (r.next_suggestions || []).forEach((s: WritingSuggestion) => { if (st[s.node_label] === 'default') st[s.node_label] = 'suggested'; });
+      // Lv3 のみ「次に書く提案(suggested)」のノード強調を付ける
+      if (level >= 3) {
+        (r.next_suggestions || []).forEach((s: WritingSuggestion) => { if (st[s.node_label] === 'default') st[s.node_label] = 'suggested'; });
+      }
       nodesRef.current.forEach((n) => {
         if (n.data?.isRelation && n.data.status) {
           const lbl = n.label || n.data.label;
           if (lbl) st[lbl] = n.data.status;
         }
       });
-      setNodeStatuses(st); setDescribedLabels(r.described || []);
-      setCurrWriting(r.currently_writing || null); setNextSugg(r.next_suggestions || []);
+      setNodeStatuses(st);
+      setDescribedLabels(r.described || []);
+      setCurrWriting(r.currently_writing || null);
+      // Lv2: 状態の可視化のみ → 提案カードは出さない。Lv3: フル。
+      setNextSugg(level >= 3 ? (r.next_suggestions || []) : []);
     } catch (e) { console.error('トピック検知エラー:', e); } finally { setDetecting(false); }
   }, [getLatestRealLabels]);
 
   const handleTopicDetection = useCallback((text: string) => {
+    if (interventionRef.current.topic_detection <= 1) return; // Lv1: 何もしない
     if (topicTimerRef.current) clearTimeout(topicTimerRef.current);
     topicTimerRef.current = setTimeout(() => runTopicDetection(text), 1500);
   }, [runTopicDetection]);
@@ -321,12 +419,47 @@ export function useDashboard() {
   }, [mode]);
 
   // =============================================
-  // 関連科目: マップ全体から候補を算出(既存のまま)
+  // 関連科目: 候補ノードの除去（フェーズ切替時の掃除）
+  //   transientCandidate=true のヘッダ/候補ノードのみ除去。
+  //   既に「詳細を表示」で展開済みの関連ノードは残す。
   // =============================================
 
-  const fetchRelationsForMap = useCallback(async (realNodes: MapNode[]) => {
+  const removeTransientRelationNodes = useCallback(() => {
+    const removeIds = new Set(
+      nodesRef.current.filter((n) => (n.data as any)?.transientCandidate).map((n) => n.id),
+    );
+    if (removeIds.size === 0) return;
+    setNodes((prev) => {
+      const nn = prev.filter((n) => !removeIds.has(n.id));
+      nodesRef.current = nn;
+      return nn;
+    });
+    setEdges((prev) => {
+      const ne = prev.filter((e) => !removeIds.has(e.source) && !removeIds.has(e.target));
+      edgesRef.current = ne;
+      return ne;
+    });
+    // 候補キャッシュも掃除
+    removeIds.forEach((id) => relationCacheRef.current.delete(id));
+  }, []);
+
+  // =============================================
+  // 関連科目: 指定方向(past/future)の候補だけを算出して表示（項目3）
+  //   - APIレスポンスは同一マップ内でキャッシュし、過去→未来の往復で再取得しない
+  //   - 候補ノードに relationPreview(接続される概念ラベル) を付与（項目1）
+  // =============================================
+
+  const fetchRelationCandidates = useCallback(async (
+    realNodes: MapNode[],
+    direction: 'past' | 'future',
+  ) => {
     if (realNodes.length === 0) return;
+    // ★ 管理者機能D: 関連科目の介入度
+    const relLevel = interventionRef.current.relation;
+    if (relLevel <= 1) return; // Lv1: 非表示
     const year = yearRef.current;
+
+    const dirLabel = direction === 'past' ? '過去（基礎）' : '未来（発展）';
 
     try {
       const combinedLabel = realNodes
@@ -338,16 +471,20 @@ export function useDashboard() {
         .filter(Boolean)
         .join(' ');
 
-      const r = await mapService
-        .getTemporalRelations({
-          label: combinedLabel,
-          sentence: combinedSentence,
-          year,
-        })
-        .catch(() => null);
+      const cacheKey = `${year}::${combinedLabel}`;
+      let r: TemporalRelationResponse | null = null;
+      if (relationApiCacheRef.current?.key === cacheKey) {
+        r = relationApiCacheRef.current.data;
+      } else {
+        r = await mapService
+          .getTemporalRelations({ label: combinedLabel, sentence: combinedSentence, year })
+          .catch(() => null);
+        if (r && !r.error) relationApiCacheRef.current = { key: cacheKey, data: r };
+      }
 
       if (!r || r.error) {
         console.warn('関連科目取得エラー:', r?.error);
+        setRelationNotice(`関連科目の取得に失敗しました（${r?.error || '通信エラー'}）。`);
         return;
       }
 
@@ -358,137 +495,153 @@ export function useDashboard() {
       const mapWidth = Math.max(...xs) - Math.min(...xs);
       const offsetX = Math.max(mapWidth / 2, 300) + 450;
 
+      const isPast = direction === 'past';
+      const srcNodes = isPast ? r.past_map?.nodes : r.future_map?.nodes;
+      const srcEdges = (isPast ? r.past_map?.edges : r.future_map?.edges) || [];
+      if (!Array.isArray(srcNodes) || srcNodes.length === 0) {
+        setRelationNotice(
+          `${dirLabel}の関連科目は見つかりませんでした。`
+          + `（現在の学年の${isPast ? '1つ下' : '1つ上'}に該当する科目データが無い可能性があります）`
+        );
+        return;
+      }
+
+      const groups = groupBySubject(srcNodes, srcEdges);
+      const total = Math.min(groups.size, 3);
+      if (total === 0) {
+        setRelationNotice(`${dirLabel}の関連科目は見つかりませんでした。`);
+        return;
+      }
+
+      const sideX = isPast ? centerX - offsetX : centerX + offsetX;
+      const candidateStatus: NodeStatus = isPast
+        ? 'relation_past_candidate' : 'relation_future_candidate';
       const candidateNodes: MapNode[] = [];
       const candidateEdges: MapEdge[] = [];
 
-      // 過去(基礎)科目
-      const pastNodes = r.past_map?.nodes;
-      if (Array.isArray(pastNodes) && pastNodes.length > 0) {
-        const groups = groupBySubject(pastNodes, r.past_map?.edges || []);
-        const total = Math.min(groups.size, 3);
-        if (total > 0) {
-          const headerId = generateId('rph');
-          candidateNodes.push({
-            id: headerId, type: 'custom',
-            position: { x: centerX - offsetX, y: centerY - (total * 60) - 30 },
-            data: {
-              label: '📘 過去の関連科目',
-              sentence: '', extend_query: '',
-              status: 'relation_past' as NodeStatus,
-              isSatellite: false, isRelation: true,
-              relationDirection: 'past', group: '', satellites: [],
-            },
-            label: '📘 過去の関連科目',
-          });
+      const headerId = generateId(isPast ? 'rph' : 'rfh');
+      candidateNodes.push({
+        id: headerId, type: 'custom',
+        position: { x: sideX, y: centerY - (total * 60) - 30 },
+        data: {
+          label: isPast ? '📘 過去の関連科目' : '📗 未来の関連科目',
+          sentence: '', extend_query: '',
+          status: (isPast ? 'relation_past' : 'relation_future') as NodeStatus,
+          isSatellite: false, isRelation: true,
+          relationDirection: direction, group: '', satellites: [],
+          transientCandidate: true,
+        },
+        label: isPast ? '📘 過去の関連科目' : '📗 未来の関連科目',
+      });
 
-          let idx = 0;
-          for (const [subjectName, sg] of groups) {
-            if (idx >= 3) break;
-            const cid = generateId('rpc');
-            const closestNode = findClosestNode(realNodes, centerX - offsetX, centerY);
-            relationCacheRef.current.set(cid, {
-              subjectName, direction: 'past',
-              originNodeId: closestNode.id,
-              nodes: sg.nodes, edges: sg.edges,
-            });
-            const yOffset = (idx - (total - 1) / 2) * 120;
-            candidateNodes.push({
-              id: cid, type: 'custom',
-              position: { x: centerX - offsetX, y: centerY + yOffset },
-              data: {
-                label: subjectName,
-                sentence: `基礎科目 — ${sg.nodes.length} 概念`,
-                extend_query: '', status: 'relation_past_candidate' as NodeStatus,
-                isSatellite: false, isRelation: true,
-                relationDirection: 'past', relationOriginId: closestNode.id,
-                relationSubjectName: subjectName, group: subjectName, satellites: [],
-              },
-              label: subjectName,
-            });
-            candidateEdges.push({
-              id: generateId('rphe'), source: headerId, target: cid,
-              label: '', isSatellite: false, isRelation: true,
-            });
-            idx++;
-          }
-        }
-      }
-
-      // 未来(発展)科目
-      const futureNodes = r.future_map?.nodes;
-      if (Array.isArray(futureNodes) && futureNodes.length > 0) {
-        const groups = groupBySubject(futureNodes, r.future_map?.edges || []);
-        const total = Math.min(groups.size, 3);
-        if (total > 0) {
-          const headerId = generateId('rfh');
-          candidateNodes.push({
-            id: headerId, type: 'custom',
-            position: { x: centerX + offsetX, y: centerY - (total * 60) - 30 },
-            data: {
-              label: '📗 未来の関連科目',
-              sentence: '', extend_query: '',
-              status: 'relation_future' as NodeStatus,
-              isSatellite: false, isRelation: true,
-              relationDirection: 'future', group: '', satellites: [],
-            },
-            label: '📗 未来の関連科目',
-          });
-
-          let idx = 0;
-          for (const [subjectName, sg] of groups) {
-            if (idx >= 3) break;
-            const cid = generateId('rfc');
-            const closestNode = findClosestNode(realNodes, centerX + offsetX, centerY);
-            relationCacheRef.current.set(cid, {
-              subjectName, direction: 'future',
-              originNodeId: closestNode.id,
-              nodes: sg.nodes, edges: sg.edges,
-            });
-            const yOffset = (idx - (total - 1) / 2) * 120;
-            candidateNodes.push({
-              id: cid, type: 'custom',
-              position: { x: centerX + offsetX, y: centerY + yOffset },
-              data: {
-                label: subjectName,
-                sentence: `発展科目 — ${sg.nodes.length} 概念`,
-                extend_query: '', status: 'relation_future_candidate' as NodeStatus,
-                isSatellite: false, isRelation: true,
-                relationDirection: 'future', relationOriginId: closestNode.id,
-                relationSubjectName: subjectName, group: subjectName, satellites: [],
-              },
-              label: subjectName,
-            });
-            candidateEdges.push({
-              id: generateId('rfhe'), source: headerId, target: cid,
-              label: '', isSatellite: false, isRelation: true,
-            });
-            idx++;
-          }
-        }
+      let idx = 0;
+      for (const [subjectName, sg] of groups) {
+        if (idx >= 3) break;
+        const cid = generateId(isPast ? 'rpc' : 'rfc');
+        const closestNode = findClosestNode(realNodes, sideX, centerY);
+        relationCacheRef.current.set(cid, {
+          subjectName, direction,
+          originNodeId: closestNode.id,
+          nodes: sg.nodes, edges: sg.edges,
+        });
+        const preview = sg.nodes
+          .map((n) => n.label || n.id)
+          .filter(Boolean)
+          .slice(0, 10);
+        relationMeta.setPreview(cid, preview); // ★ FB1: 変換非依存で確実に渡す
+        const yOffset = (idx - (total - 1) / 2) * 120;
+        candidateNodes.push({
+          id: cid, type: 'custom',
+          position: { x: sideX, y: centerY + yOffset },
+          data: {
+            label: subjectName,
+            sentence: relLevel >= 3
+              ? `${isPast ? '基礎' : '発展'}科目 — ${sg.nodes.length} 概念`
+              : `${isPast ? '基礎' : '発展'}科目`,
+            extend_query: '', status: candidateStatus,
+            isSatellite: false, isRelation: true,
+            relationDirection: direction, relationOriginId: closestNode.id,
+            relationSubjectName: subjectName, group: subjectName,
+            relationPreview: relLevel >= 3 ? preview : [],
+            relationLevel: relLevel,  // ★ Lv2: 科目名のみ（展開不可）
+            transientCandidate: true,
+            satellites: [],
+          },
+          label: subjectName,
+        });
+        candidateEdges.push({
+          id: generateId(isPast ? 'rphe' : 'rfhe'), source: headerId, target: cid,
+          label: '', isSatellite: false, isRelation: true,
+        });
+        idx++;
       }
 
       if (candidateNodes.length > 0) {
         const resolved = resolveOverlaps(candidateNodes, nodesRef.current);
-        setNodes((prev) => [...prev, ...resolved]);
+        setNodes((prev) => { const nn = [...prev, ...resolved]; nodesRef.current = nn; return nn; });
         setEdges((prev) => { const ne = [...prev, ...candidateEdges]; edgesRef.current = ne; return ne; });
+        // 候補が出た場合は (idx>0) のときだけ通知クリア。ヘッダのみ(idx===0)なら空扱い。
+        if (idx > 0) setRelationNotice(null);
+        else setRelationNotice(`${dirLabel}の関連科目は見つかりませんでした。`);
       }
     } catch (e) {
       console.warn('関連科目候補取得失敗:', e);
+      setRelationNotice('関連科目の取得中にエラーが発生しました。');
     }
   }, []);
 
   // =============================================
-  // 関連科目: 候補を展開(既存のまま)
+  // ★★★ 項目3: フェーズ遷移 ★★★
+  //   create → edit → connect_past → connect_future
+  //   連続表示で混乱しないよう、フェーズに応じて候補を出し分ける。
   // =============================================
 
+  const goToPhase = useCallback((target: FlowPhase) => {
+    setRelationNotice(null); // フェーズ移動時は通知をリセット
+    // まず現在の候補(transient)を掃除
+    const real = nodesRef.current.filter(
+      (n) => !n.data?.isSatellite && !n.data?.isRelation,
+    );
+    removeTransientRelationNodes();
+
+    setFlowPhase(target);
+    // ReflectionSheet 用の write/revise を同期
+    setPhase(target === 'create' ? 'write' : 'revise');
+
+    if ((target === 'connect_past' || target === 'connect_future') && real.length > 0) {
+      void fetchRelationCandidates(real, target === 'connect_past' ? 'past' : 'future');
+    }
+  }, [removeTransientRelationNodes, fetchRelationCandidates]);
+
+  const handleNextPhase = useCallback(() => {
+    const order = effectiveOrderRef.current;
+    const i = order.indexOf(flowPhaseRef.current);
+    if (i < 0 || i >= order.length - 1) return;
+    // create フェーズはマップ生成で edit に進む(直接スキップさせない)
+    if (flowPhaseRef.current === 'create' && nodesRef.current.length === 0) return;
+    goToPhase(order[i + 1]);
+  }, [goToPhase]);
+
+  const handlePrevPhase = useCallback(() => {
+    const order = effectiveOrderRef.current;
+    const i = order.indexOf(flowPhaseRef.current);
+    if (i <= 0) return;
+    goToPhase(order[i - 1]);
+  }, [goToPhase]);
+
   const handleExpandRelation = useCallback((candidateNodeId: string) => {
+    // ★ 管理者機能D: 部分木のドッキングは Lv3 のみ
+    if (interventionRef.current.relation < 3) return;
     const cache = relationCacheRef.current.get(candidateNodeId);
     if (!cache) return;
     const candidateNode = nodesRef.current.find((n) => n.id === candidateNodeId);
     const candidatePos = candidateNode?.position || { x: 0, y: 0 };
     const existing = nodesRef.current.filter((n) => n.id !== candidateNodeId);
     const { nodes: expNodes, edges: expEdges } = expandSubGraph(cache, candidatePos, existing);
-    setNodes((prev) => [...prev.filter((n) => n.id !== candidateNodeId), ...expNodes]);
+    setNodes((prev) => {
+      const nn = [...prev.filter((n) => n.id !== candidateNodeId), ...expNodes];
+      nodesRef.current = nn; return nn;
+    });
     setEdges((prev) => {
       const ne = [
         ...prev.filter((e) => e.source !== candidateNodeId && e.target !== candidateNodeId),
@@ -502,6 +655,7 @@ export function useDashboard() {
       subject: cache.subjectName, direction: cache.direction,
       expanded_nodes: expNodes.length,
     }, memoRef.current?.id);
+    scheduleAutoSave(); // ★ 項目6
   }, []);
 
   useEffect(() => {
@@ -523,6 +677,9 @@ export function useDashboard() {
   // =============================================
 
   const handleFetchSurrounding = useCallback(async (nodeId: string) => {
+    // ★ 管理者機能D: 周辺概念の介入度
+    const satLevel = interventionRef.current.satellite;
+    if (satLevel <= 1) return; // Lv1: 取得しない
     const cur = nodesRef.current;
     const parent = cur.find((n) => n.id === nodeId);
     if (!parent) return;
@@ -550,15 +707,17 @@ export function useDashboard() {
 
       const rawSat: MapNode[] = fresh.map((c, ci) => {
         const sid = generateId('sat');
+        // Lv2 はラベルのみ（関係性を隠す）
+        const rel = satLevel >= 3 ? c.relation : '';
         return {
           id: sid, type: 'custom',
           position: placeSatellitePos(parent.position, fresh.length, ci),
           data: {
-            label: c.label, sentence: c.relation, extend_query: '',
+            label: c.label, sentence: rel, extend_query: '',
             status: 'satellite' as NodeStatus, isSatellite: true,
             parentNodeId: parent.id, isRelation: false, satellites: [],
           },
-          label: c.label, sentence: c.relation,
+          label: c.label, sentence: rel,
         };
       });
       // 既存ノード(関連科目・他衛星含む)との重なりを解消してから配置
@@ -571,6 +730,7 @@ export function useDashboard() {
       setNodes((p) => { const nn = [...p, ...satN]; nodesRef.current = nn; return nn; });
       setEdges((p) => { const ne = [...p, ...satE]; edgesRef.current = ne; return ne; });
       loggingService.logActivity('surrounding_fetch' as any, { parent: parentLabel, count: satN.length }, memoRef.current?.id);
+      scheduleAutoSave(); // ★ 項目6
     } catch (e) {
       console.warn('周辺概念の追加取得失敗:', e);
     }
@@ -594,19 +754,33 @@ export function useDashboard() {
     if (!memoRef.current) return;
     setSaveStatus('saving');
     try {
-      const realN = nodesRef.current.filter((n) => !n.data?.isSatellite && !n.data?.isRelation);
-      const realE = edgesRef.current.filter((e) => !e.isSatellite && !e.isRelation);
+      // ★ FB4: 保存対象を拡張。
+      //   通常ノードに加え、サジェスト（周辺概念=衛星）・科目間関連ノード（展開済み）も保存する。
+      //   ただしフェーズ用の一時候補（transientCandidate: 科目選択ボタン/ヘッダ）は
+      //   APIから都度再生成するため保存しない。
+      const isTransient = (n: MapNode) => !!(n.data as any)?.transientCandidate;
+      const savableNodes = nodesRef.current
+        .filter((n) => !isTransient(n))
+        .map((n) => {
+          // ★ 関連ノードは変換で落ちた relationDepth をストアから補完して保存（再読込で復元できる）
+          if (n.data?.isRelation) {
+            const depth = relationMeta.getDepth(n.id);
+            if (typeof depth === 'number') {
+              return { ...n, data: { ...n.data, relationDepth: depth } };
+            }
+          }
+          return n;
+        });
+      const savableIds = new Set(savableNodes.map((n) => n.id));
+      const savableEdges = edgesRef.current.filter(
+        (e) => savableIds.has(e.source) && savableIds.has(e.target),
+      );
 
       const tasks: Promise<unknown>[] = [];
 
-      // ★★★ 重要な修正 ★★★
-      // ノードが 0 件のときはマップを保存しない。
-      // write フェーズ・空メモ作成直後・本文/タイトル編集時にもデバウンス
-      // 自動保存が走るため、従来は生成済みマップを nodes:[] で上書きしてしまい、
-      // 「再読込するとマップが消える(getMap が nodes:[] を返す)」事象の原因に
-      // なっていた。空のときはマップ保存をスキップし、本文・タイトルのみ保存する。
-      if (realN.length > 0) {
-        tasks.push(mapService.updateMap(memoRef.current.id, realN, realE));
+      // ノードが 0 件のときはマップを保存しない（生成前/空メモの誤上書き防止）。
+      if (savableNodes.length > 0) {
+        tasks.push(mapService.updateMap(memoRef.current.id, savableNodes, savableEdges));
       }
 
       // patchMemo は memoService に追加された関数. 失敗してもマップ保存だけは進める
@@ -633,7 +807,10 @@ export function useDashboard() {
 
   /** タイトル・本文の変更時のデバウンス自動保存 (1.5 秒) */
   const handleAutoSaveRef = useRef(handleAutoSave);
-  useEffect(() => { handleAutoSaveRef.current = handleAutoSave; }, [handleAutoSave]);
+  useEffect(() => {
+    handleAutoSaveRef.current = handleAutoSave;
+    autoSaveFnRef.current = handleAutoSave; // ★ 項目6: スケジューラ用にも反映
+  }, [handleAutoSave]);
 
   const triggerAutoSaveDebounced = useCallback(() => {
     if (!memoRef.current) return;
@@ -710,44 +887,57 @@ export function useDashboard() {
       setNodes(layout); setEdges(rawEdges);
       edgesRef.current = rawEdges; nodesRef.current = layout;
       setPhase('revise');
+      setFlowPhase('edit'); // ★ 項目3: 初期マップ作成 → マップ編集へ
       loggingService.logActivity('map_generate', { node_count: layout.length }, memo.id);
 
       // (A) 周辺概念 → satellite
+      // ★ 管理者機能D: 周辺概念の介入度（Lv1: 取得しない / Lv2: ラベルのみ / Lv3: フル）
+      const satLevel = interventionRef.current.satellite;
+      if (satLevel >= 2) {
       mapService.getSurroundingConcepts(layout)
         .then((surrounding) => {
           const satN: MapNode[] = []; const satE: MapEdge[] = [];
           const cur = nodesRef.current;
+          // ★ 項目5: 既にマップ上にあるラベル + この一括追加内で既出のラベルを除外
+          const usedLabels = new Set(
+            cur.map((n) => (n.label || n.data?.label || '')).filter(Boolean),
+          );
           for (const [parentLabel, concepts] of Object.entries(surrounding)) {
             const parent = cur.find((n) => (n.label || n.data?.label) === parentLabel);
             if (!parent) continue;
-            concepts.forEach((c, ci) => {
+            const fresh = concepts.filter((c) => c.label && !usedLabels.has(c.label));
+            fresh.forEach((c, ci) => {
+              usedLabels.add(c.label); // 兄弟・他親との重複も防ぐ
               const sid = generateId('sat');
+              // Lv2 はラベルのみ（関係性 relation は隠す）
+              const rel = satLevel >= 3 ? c.relation : '';
               satN.push({ id: sid, type: 'custom',
-                position: placeSatellitePos(parent.position, concepts.length, ci),
-                data: { label: c.label, sentence: c.relation, extend_query: '',
+                position: placeSatellitePos(parent.position, fresh.length, ci),
+                data: { label: c.label, sentence: rel, extend_query: '',
                   status: 'satellite' as NodeStatus, isSatellite: true, parentNodeId: parent.id,
                   isRelation: false, satellites: [] },
-                label: c.label, sentence: c.relation,
+                label: c.label, sentence: rel,
               });
               satE.push({ id: generateId('sedge'), source: parent.id, target: sid,
-                label: c.relation, isSatellite: true, isRelation: false });
+                label: rel, isSatellite: true, isRelation: false });
             });
           }
           if (satN.length > 0) {
-            setNodes((p) => [...p, ...satN]);
+            setNodes((p) => { const nn = [...p, ...satN]; nodesRef.current = nn; return nn; });
             setEdges((p) => { const ne = [...p, ...satE]; edgesRef.current = ne; return ne; });
           }
         })
         .catch((e) => console.warn('周辺概念取得失敗:', e));
+      } // end if satLevel >= 2
 
-      // (B) 関連科目候補
-      fetchRelationsForMap(layout);
+      // (B) 関連科目候補は「過去/未来の科目接続」フェーズで取得する（項目3）
+      //     ここでは自動取得しない。
     } catch (e) {
       console.error('マップ生成エラー:', e);
     } finally {
       setLoading(false);
     }
-  }, [mode, fetchRelationsForMap]);
+  }, [mode]);
 
   // =============================================
   // ★★★ v3.2.1 追加: 新規空メモ作成(二重実行防止) ★★★
@@ -773,6 +963,8 @@ export function useDashboard() {
       setCurrWriting(null);
       setNextSugg([]);
       setPhase('write');
+      setFlowPhase('create'); // ★ 項目3
+      relationApiCacheRef.current = null;
       return memo;
     } catch (e) {
       console.error('空メモ作成失敗:', e);
@@ -812,26 +1004,46 @@ export function useDashboard() {
       console.log('🔍 normalized nodes/edges count:', rawNodes.length, rawEdgesData.length);
 
       if (rawNodes.length > 0) {
-        const raw: MapNode[] = rawNodes.map((n: any) => ({
-          id: n.id ?? generateId('n'),
-          type: 'custom',
-          position: n.position || { x: n.x ?? 0, y: n.y ?? 0 },
-          data: {
-            label: n.label || n.data?.label || n.id,
-            sentence: n.sentence || n.data?.sentence || '',
-            extend_query: n.extend_query || n.data?.extend_query || '',
-            status: 'default' as NodeStatus,
-            isSatellite: false, isRelation: false, satellites: [],
-          },
-          label: n.label || n.data?.label || n.id,
-          sentence: n.sentence || n.data?.sentence || '',
-          extend_query: n.extend_query || n.data?.extend_query || '',
-        }));
+        const raw: MapNode[] = rawNodes.map((n: any) => {
+          const dIn = n.data || {};
+          const nodeId = n.id ?? generateId('n');
+          const label = dIn.label || n.label || n.id;
+          const sentence = dIn.sentence || n.sentence || '';
+          const extendQuery = dIn.extend_query || n.extend_query || '';
+          // ★ FB4: 保存済みの状態（周辺概念=衛星 / 科目間関連 / 深さ 等）を復元
+          const isSatellite = dIn.isSatellite ?? false;
+          const isRelation = dIn.isRelation ?? false;
+          const relationDepth = dIn.relationDepth;
+          if (isRelation && typeof relationDepth === 'number') {
+            relationMeta.setDepth(nodeId, relationDepth);
+          }
+          return {
+            id: nodeId,
+            type: 'custom',
+            position: n.position || { x: n.x ?? 0, y: n.y ?? 0 },
+            data: {
+              label, sentence, extend_query: extendQuery,
+              status: (dIn.status as NodeStatus) || 'default',
+              isSatellite,
+              parentNodeId: dIn.parentNodeId,
+              isRelation,
+              relationDirection: dIn.relationDirection,
+              relationOriginId: dIn.relationOriginId,
+              relationDepth,
+              group: dIn.group,
+              satellites: dIn.satellites || [],
+            },
+            label, sentence, extend_query: extendQuery,
+          };
+        });
         const rawEdges: MapEdge[] = rawEdgesData.map((e: any) => ({
           id: e.id ?? generateId('e'),
           source: e.source ?? e.from,
           target: e.target ?? e.to,
-          label: e.label || '', isSatellite: false, isRelation: false,
+          label: e.label || '',
+          // ★ FB4: 衛星/関連エッジの種別も復元
+          isSatellite: e.isSatellite ?? false,
+          isRelation: e.isRelation ?? false,
         }));
 
         const hasPos = raw.every((n) => n.position.x !== 0 || n.position.y !== 0);
@@ -841,8 +1053,8 @@ export function useDashboard() {
         nodesRef.current = layout;
         edgesRef.current = rawEdges;
         setPhase('revise');
-
-        fetchRelationsForMap(layout);
+        setFlowPhase('edit'); // ★ 項目3: 既存マップは編集フェーズで開く
+        relationApiCacheRef.current = null; // 別マップなので関連科目キャッシュを破棄
       } else {
         // マップがまだ無い(空メモ等)
         setNodes([]);
@@ -850,13 +1062,14 @@ export function useDashboard() {
         nodesRef.current = [];
         edgesRef.current = [];
         setPhase('write');
+        setFlowPhase('create');
       }
     } catch (e) {
       console.error('既存メモ読み込み失敗:', e);
     } finally {
       setLoading(false);
     }
-  }, [fetchRelationsForMap]);
+  }, []);
 
   // =============================================
   // その他ハンドラ(既存のまま)
@@ -865,29 +1078,41 @@ export function useDashboard() {
   const handleAddNode = useCallback(async (keyword: string) => {
     try {
       const r = await mapService.createManualNode(keyword);
+      // ★ FB-E: バックエンド/LLM が返す id（例 "node_1"）が重複すると
+      //   React Flow が「ノードIDが一意でない」で落ちるため、常にフロントで一意IDを採番する。
+      const uniqueId = generateId('manual');
       const nn: MapNode = {
-        id: r.id || generateId('manual'), type: 'custom', position: { x: 0, y: 0 },
+        id: uniqueId, type: 'custom', position: { x: 0, y: 0 },
         data: { label: r.label || keyword, sentence: r.sentence || '',
           extend_query: r.extend_query || '', status: 'default' as NodeStatus,
           isSatellite: false, isRelation: false, satellites: [] },
-        label: r.label || keyword, sentence: r.sentence, extend_query: r.extend_query,
+        label: r.label || keyword, sentence: r.sentence || '', extend_query: r.extend_query || '',
       };
       setNodes((prev) => {
+        // 念のため既存IDと衝突しないことを保証
+        if (prev.some((p) => p.id === nn.id)) nn.id = generateId('manual2');
         const real = prev.filter((n) => !n.data?.isSatellite && !n.data?.isRelation);
         const others = prev.filter((n) => n.data?.isSatellite || n.data?.isRelation);
-        return [...computeRadialLayout([...real, nn], edgesRef.current), ...others];
+        const nn2 = [...computeRadialLayout([...real, nn], edgesRef.current), ...others];
+        nodesRef.current = nn2;
+        return nn2;
       });
+      scheduleAutoSave(); // ★ 項目6
     } catch (e) { console.error('ノード追加エラー:', e); }
-  }, []);
+  }, [scheduleAutoSave]);
 
   const handleSatelliteAdd = useCallback((satNodeId: string) => {
-    setNodes((prev) => prev.map((n) =>
-      n.id === satNodeId ? { ...n, data: { ...n.data!, isSatellite: false, status: 'default' as NodeStatus } } : n));
+    setNodes((prev) => {
+      const nn = prev.map((n) =>
+        n.id === satNodeId ? { ...n, data: { ...n.data!, isSatellite: false, status: 'default' as NodeStatus } } : n);
+      nodesRef.current = nn; return nn;
+    });
     setEdges((prev) => {
       const ne = prev.map((e) => (e.target === satNodeId && e.isSatellite) ? { ...e, isSatellite: false } : e);
       edgesRef.current = ne; return ne;
     });
-  }, []);
+    scheduleAutoSave(); // ★ 項目6: 衛星をマップに昇格 → 保存
+  }, [scheduleAutoSave]);
 
   const handleConnect = useCallback((src: string, tgt: string, label: string) => {
     const ne: MapEdge = { id: generateId('edge'), source: src, target: tgt, label: label || '', isSatellite: false, isRelation: false };
@@ -929,5 +1154,17 @@ export function useDashboard() {
     memoTitle, setMemoTitle,
     handleCreateBlankMemo,
     loadExistingMemo,
+
+    // ★★★ 項目3: フェーズ制 ★★★
+    flowPhase, goToPhase, handleNextPhase, handlePrevPhase,
+
+    // ★ A対策: 関連科目の通知（候補0件など）
+    relationNotice, clearRelationNotice: () => setRelationNotice(null),
+
+    // ★★★ 管理者機能D: 設定（モードON/OFF・介入度） ★★★
+    settings,
+    enabledModes: settings.enabled_modes,
+    intervention: settings.intervention,
+    flowPhases,
   };
 }

@@ -11,6 +11,7 @@ import { createPortal } from 'react-dom';
 import { Handle, Position, type NodeProps, useStore } from 'reactflow';
 import { CheckCircle2, Plus, X, Search, ExternalLink, BookOpen, ChevronRight, Info, Sparkles } from 'lucide-react';
 import type { MapNodeData } from '@/types';
+import { relationMeta } from '@/utils/relationMeta';
 
 const BORDER: Record<string, string> = {
   currently_writing: '#f59f00', described: '#40c057',
@@ -166,6 +167,30 @@ const CustomNode: React.FC<NodeProps<MapNodeData>> = ({ data, selected, id, xPos
   const relBgTag = isPast ? '#bee3f8' : '#b2f5ea';
   const dirLabel = isPast ? '過去' : '未来';
 
+  // ===== ★ FB2: 展開済み関連ノードは「根（科目名）」に近いほど大きく・色濃く =====
+  //   data.relationDepth が変換で落ちても relationMeta から復元する。
+  const relDepth = typeof data.relationDepth === 'number'
+    ? data.relationDepth
+    : (relationMeta.getDepth(id) ?? 0);
+  const depthClamp = Math.max(0, Math.min(relDepth, 4)); // 0..4
+  // 根(0)で最大、深くなるほど縮小（差を大きく付ける）: 1.5 → 0.6
+  const relScale = isRelExpanded ? Math.max(0.6, 1.5 - depthClamp * 0.22) : 1;
+  // 根に近いほど濃い → 遠いほど淡い
+  const relPalette = isPast
+    ? ['#2b6cb0', '#3182ce', '#4299e1', '#63b3ed', '#90cdf4']
+    : ['#276749', '#2f855a', '#38a169', '#48bb78', '#9ae6b4'];
+  const relBgPalette = isPast
+    ? ['#bee3f8', '#cfe8fb', '#e0f0fb', '#ebf8ff', '#f5fbff']
+    : ['#b2f5ea', '#c6f6e6', '#d6f9ec', '#e6fffa', '#f0fff9'];
+  const relDepthBorder = relPalette[depthClamp];
+  const relDepthBg = relBgPalette[depthClamp];
+
+  // ★ FB1: 候補ノードが展開時に接続する概念のプレビュー（変換で落ちても復元）
+  const previewList: string[] =
+    (Array.isArray(data.relationPreview) && data.relationPreview.length > 0)
+      ? (data.relationPreview as string[])
+      : (relationMeta.getPreview(id) || []);
+
   return (
     <>
       <div
@@ -177,10 +202,12 @@ const CustomNode: React.FC<NodeProps<MapNodeData>> = ({ data, selected, id, xPos
           '--float-delay': `${fp.delay}s`,
           '--float-duration': `${fp.duration}s`,
           '--appear-delay': isRel ? `${(hashStr(id) % 8) * 0.1}s` : '0s',
-          minWidth: isSat ? 120 : isRel ? 140 : 140,
-          maxWidth: isSat ? 180 : isRel ? 220 : 220,
-          background: BG[status] ?? '#fff',
-          border: isDashed ? `2px dashed ${border}` : `2px solid ${border}`,
+          minWidth: isSat ? 120 : isRelExpanded ? Math.round(150 * relScale) : isRel ? 140 : 140,
+          maxWidth: isSat ? 180 : isRelExpanded ? Math.round(260 * relScale) : isRel ? 220 : 220,
+          background: isRelExpanded ? relDepthBg : (BG[status] ?? '#fff'),
+          border: isRelExpanded
+            ? `2px dashed ${relDepthBorder}`
+            : (isDashed ? `2px dashed ${border}` : `2px solid ${border}`),
           borderRadius: isDashed ? 20 : 14,
           cursor: 'pointer',
           boxShadow: GLOW[status] ?? '0 1px 4px rgba(0,0,0,.06)',
@@ -217,9 +244,9 @@ const CustomNode: React.FC<NodeProps<MapNodeData>> = ({ data, selected, id, xPos
           {isSat && <Plus size={12} style={{ color: '#748ffc', flexShrink: 0 }} />}
           {isRel && <BookOpen size={12} style={{ color: relColor, flexShrink: 0 }} />}
           <span style={{
-            fontSize: isSat ? 11 : isRel ? 11 : 12,
-            fontWeight: isSat ? 500 : 600,
-            color: isRel ? relTextColor : isSat ? '#4263eb' : '#1a1d23',
+            fontSize: isSat ? 11 : isRelExpanded ? Math.max(9, Math.round(15 * relScale)) : isRel ? 11 : 12,
+            fontWeight: isSat ? 500 : isRelExpanded ? 700 : 600,
+            color: isRelExpanded ? relDepthBorder : isRel ? relTextColor : isSat ? '#4263eb' : '#1a1d23',
             flex: 1,
           }}>
             {data.label}
@@ -301,9 +328,37 @@ const CustomNode: React.FC<NodeProps<MapNodeData>> = ({ data, selected, id, xPos
           )}
 
           {isCandidate && (
-            <p style={{ fontSize: 11, color: '#718096', marginBottom: 10, lineHeight: 1.6 }}>
-              この科目に関連する概念のマップを展開できます。
-            </p>
+            <>
+              <p style={{ fontSize: 11, color: '#718096', marginBottom: 8, lineHeight: 1.6 }}>
+                「詳細を表示」で、以下の概念がこのマップに接続されます。
+              </p>
+              {previewList.length > 0 ? (
+                <div style={{
+                  marginBottom: 10, padding: '8px 10px', borderRadius: 8,
+                  background: isPast ? '#ebf8ff' : '#e6fffa',
+                  border: `1px solid ${relLightColor}`,
+                }}>
+                  <p style={{ fontSize: 10, fontWeight: 700, color: relTextColor, marginBottom: 5 }}>
+                    接続される概念（{previewList.length}件）
+                  </p>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                    {previewList.map((p, i) => (
+                      <span key={i} style={{
+                        fontSize: 10, fontWeight: 500, color: relTextColor,
+                        background: '#fff', borderRadius: 6, padding: '2px 7px',
+                        border: `1px solid ${relLightColor}`,
+                      }}>
+                        {p}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <p style={{ fontSize: 10, color: '#a0aec0', marginBottom: 10 }}>
+                  接続される概念のプレビューはありません。
+                </p>
+              )}
+            </>
           )}
 
           {data.sentence && !isCandidate && (

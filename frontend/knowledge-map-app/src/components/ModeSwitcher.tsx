@@ -5,11 +5,13 @@
 import React from 'react';
 import { BookOpen, Search, Lightbulb } from 'lucide-react';
 import { cn } from '@/utils';
-import type { AppMode } from '../types';
+import type { AppMode, EnabledModes } from '../types';
 
 interface ModeSwitcherProps {
   mode: AppMode;
   onChange: (mode: AppMode) => void;
+  /** 管理者設定で有効なモードのみ表示（未指定なら全表示） */
+  enabledModes?: EnabledModes;
 }
 
 const modes: { key: AppMode; label: string; icon: React.ReactNode; color: string }[] = [
@@ -18,10 +20,13 @@ const modes: { key: AppMode; label: string; icon: React.ReactNode; color: string
   { key: 'idea', label: 'アイデア', icon: <Lightbulb size={15} />, color: 'amber' },
 ];
 
-export const ModeSwitcher: React.FC<ModeSwitcherProps> = ({ mode, onChange }) => {
+export const ModeSwitcher: React.FC<ModeSwitcherProps> = ({ mode, onChange, enabledModes }) => {
+  const visibleModes = enabledModes
+    ? modes.filter((m) => enabledModes[m.key])
+    : modes;
   return (
     <div className="flex items-center gap-1 p-1 bg-surface-100 rounded-xl">
-      {modes.map((m) => {
+      {visibleModes.map((m) => {
         const isActive = mode === m.key;
         return (
           <button

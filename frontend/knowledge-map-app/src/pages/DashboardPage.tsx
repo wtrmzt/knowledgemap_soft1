@@ -6,11 +6,11 @@
  * - タイトル編集欄(currentMemo がある時のみ表示)
  * - ?memo_id=<id> / ?new=1 のクエリ対応
  */
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import {
   History, LogOut, Settings, Save, CheckCircle2, GraduationCap,
-  LayoutGrid,
+  LayoutGrid, HelpCircle, ChevronLeft, ChevronRight, BookOpen,
 } from 'lucide-react';
 import {
   ModeSwitcher, ReflectionSheet,
@@ -18,6 +18,11 @@ import {
 } from '@/components';
 import { Button } from '@/components/ui';
 import { useDashboard } from '@/hooks/useDashboard';
+import { HelpTutorial, shouldAutoOpenTutorial } from '@/components/HelpTutorial';
+import { HelpOverlay } from '@/components/HelpOverlay';
+import { FLOW_PHASE_LABELS } from '@/types';
+
+const CURRENT_MEMO_KEY = 'kmap_current_memo';
 
 const YEAR_OPTIONS = [
   { value: 1, label: '1年次' },
@@ -29,6 +34,7 @@ const YEAR_OPTIONS = [
 const DashboardPage: React.FC = () => {
   const d = useDashboard();
   const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
 
   const memoIdParam = searchParams.get('memo_id');
   const isNewParam = searchParams.get('new') === '1';
@@ -79,6 +85,64 @@ const DashboardPage: React.FC = () => {
 
   const titleValue = d.memoTitle ?? '';
 
+  // ★★★ 項目8: 編集中マップの永続化 + 復元 ★★★
+  // 現在のメモIDを sessionStorage に保持（マップ一覧へ往復しても失わない）
+  useEffect(() => {
+    if (d.currentMemo) {
+      try { sessionStorage.setItem(CURRENT_MEMO_KEY, String(d.currentMemo.id)); } catch { /* noop */ }
+    }
+  }, [d.currentMemo]);
+
+  // memo_id も new も無い「素の /dashboard」で開かれたとき:
+  //   - 直前に編集していたマップがあれば復元（?memo_id=<id> に置換）
+  //   - 無ければマップ一覧へ誘導（マップ一覧→作成→ダッシュボードの導線に統一）
+  const handledRestoreRef = useRef(false);
+  useEffect(() => {
+    if (memoIdParam || isNewParam) return;
+    if (handledRestoreRef.current) return;
+    handledRestoreRef.current = true;
+
+    let stored: string | null = null;
+    try { stored = sessionStorage.getItem(CURRENT_MEMO_KEY); } catch { /* noop */ }
+
+    if (stored && !Number.isNaN(Number(stored))) {
+      setSearchParams({ memo_id: stored }, { replace: true });
+    } else {
+      navigate('/maps', { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [memoIdParam, isNewParam]);
+
+  // ★★★ 項目9 / FB5: チュートリアル（手順ガイド）とヘルプ（領域説明）は別機能 ★★★
+  const [helpOpen, setHelpOpen] = useState(false);          // チュートリアル（モーダル）
+  const [helpRegionsOpen, setHelpRegionsOpen] = useState(false); // ヘルプ（各領域の説明）
+  useEffect(() => {
+    if (shouldAutoOpenTutorial()) setHelpOpen(true);
+  }, []);
+
+  // ★★★ 管理者機能D: ログイン時の「ようこそ管理者様」（セッション中1回）★★★
+  const [welcomeOpen, setWelcomeOpen] = useState(false);
+  useEffect(() => {
+    if (!d.isAdminUser) return;
+    try {
+      if (sessionStorage.getItem('kmap_admin_welcomed') !== '1') {
+        setWelcomeOpen(true);
+        sessionStorage.setItem('kmap_admin_welcomed', '1');
+      }
+    } catch { /* noop */ }
+  }, [d.isAdminUser]);
+
+  // ★★★ 項目3 / 管理者機能D: フェーズ制御（関連Lv1なら接続フェーズなし） ★★★
+  const hasMap = d.nodes.length > 0;
+  const phaseOrder = d.flowPhases;
+  const phaseIndex = phaseOrder.indexOf(d.flowPhase);
+  const canPrev = phaseIndex > 0;
+  const canNext =
+    phaseIndex >= 0 &&
+    phaseIndex < phaseOrder.length - 1 &&
+    // create→edit はマップ生成が前提
+    !(d.flowPhase === 'create' && !hasMap);
+
   return (
     <div className="h-screen flex flex-col bg-surface-50">
       {/* ===== Header ===== */}
@@ -94,7 +158,7 @@ const DashboardPage: React.FC = () => {
             <span className="text-sm font-bold font-display text-surface-700">知識マップ</span>
           </div>
 
-          <ModeSwitcher mode={d.mode} onChange={d.handleModeChange} />
+          <ModeSwitcher mode={d.mode} onChange={d.handleModeChange} enabledModes={d.enabledModes} />
 
           <div className="flex items-center gap-1.5 ml-2">
             <GraduationCap size={14} className="text-surface-400" />
@@ -119,6 +183,33 @@ const DashboardPage: React.FC = () => {
             <LayoutGrid size={14} />
             マップ一覧
           </Link>
+
+          {/* ★★★ FB3: フェーズは「現在の1つ」だけ表示 + 進む/戻る ★★★ */}
+          {hasMap && (
+            <div className="ml-3 flex items-center gap-1 pl-3 border-l border-surface-200">
+              <button
+                onClick={d.handlePrevPhase}
+                disabled={!canPrev}
+                title="前のフェーズ"
+                className="flex items-center justify-center w-6 h-6 rounded-md text-surface-500 hover:bg-surface-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              >
+                <ChevronLeft size={15} />
+              </button>
+
+              <span className="text-[11px] px-2.5 py-1 rounded-md font-semibold whitespace-nowrap bg-primary-600 text-white">
+                {`${phaseIndex + 1}. ${FLOW_PHASE_LABELS[d.flowPhase]}`}
+              </span>
+
+              <button
+                onClick={d.handleNextPhase}
+                disabled={!canNext}
+                title="次のフェーズ"
+                className="flex items-center justify-center gap-0.5 h-6 px-1.5 rounded-md text-xs font-medium text-primary-600 hover:bg-primary-50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              >
+                次へ<ChevronRight size={14} />
+              </button>
+            </div>
+          )}
         </div>
 
         <div className="flex items-center gap-2">
@@ -146,11 +237,7 @@ const DashboardPage: React.FC = () => {
             </span>
           )}
 
-          {d.currentMemo && (
-            <Button variant="ghost" size="sm" onClick={() => d.setShowHistory(!d.showHistory)}>
-              <History size={14} />
-            </Button>
-          )}
+          {/* 変更履歴・使い方ガイド・ヘルプはフッターへ移動（FB-C） */}
           {d.isAdminUser && (
             <Button variant="ghost" size="sm" onClick={() => d.navigate('/admin')}>
               <Settings size={14} />
@@ -162,6 +249,28 @@ const DashboardPage: React.FC = () => {
           </Button>
         </div>
       </header>
+
+      {/* ★★★ 管理者機能D: ようこそ管理者様 ★★★ */}
+      {welcomeOpen && d.isAdminUser && (
+        <div className="shrink-0 flex items-center justify-between gap-3 px-4 py-2 bg-primary-50 border-b border-primary-200">
+          <span className="text-xs text-primary-800">
+            ようこそ管理者様。設定（モードON/OFF・介入度・プロンプト）は
+            <button
+              onClick={() => d.navigate('/admin')}
+              className="mx-1 font-semibold underline underline-offset-2 hover:text-primary-900"
+            >
+              管理者ツール
+            </button>
+            から変更できます。
+          </span>
+          <button
+            onClick={() => setWelcomeOpen(false)}
+            className="text-[11px] text-primary-600 hover:text-primary-800 px-2 py-1 rounded-md hover:bg-primary-100 transition-colors"
+          >
+            閉じる
+          </button>
+        </div>
+      )}
 
       {/* ===== Main ===== */}
       <div className="flex-1 flex overflow-hidden">
@@ -208,8 +317,53 @@ const DashboardPage: React.FC = () => {
           <MapHistoryPanel memoId={d.currentMemo?.id ?? null}
             visible={d.showHistory} onClose={() => d.setShowHistory(false)}
             onRollback={d.handleRollback} />
+
+          {/* ★ A対策: 関連科目が0件などのとき、無言ではなく理由を表示 */}
+          {d.relationNotice && (d.flowPhase === 'connect_past' || d.flowPhase === 'connect_future') && (
+            <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 max-w-md flex items-start gap-2 px-3.5 py-2.5 rounded-xl bg-amber-50 border border-amber-200 shadow-md animate-fade-in">
+              <span className="text-[12px] leading-relaxed text-amber-800">{d.relationNotice}</span>
+              <button
+                onClick={d.clearRelationNotice}
+                className="text-[11px] text-amber-600 hover:text-amber-800 shrink-0 mt-0.5"
+                aria-label="閉じる"
+              >
+                ✕
+              </button>
+            </div>
+          )}
         </main>
       </div>
+
+      {/* ===== Footer: ツール類（FB-C で移動） ===== */}
+      <footer className="h-9 shrink-0 flex items-center justify-end gap-1 px-4 border-t border-surface-200 bg-white">
+        {d.currentMemo && (
+          <button
+            onClick={() => d.setShowHistory(!d.showHistory)}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium text-surface-500 hover:bg-surface-100 hover:text-surface-700 transition-colors"
+            title="変更履歴"
+          >
+            <History size={13} /> 変更履歴
+          </button>
+        )}
+        <button
+          onClick={() => setHelpOpen(true)}
+          className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium text-surface-500 hover:bg-surface-100 hover:text-surface-700 transition-colors"
+          title="チュートリアル（使い方の手順）"
+        >
+          <BookOpen size={13} /> 使い方ガイド
+        </button>
+        <button
+          onClick={() => setHelpRegionsOpen(true)}
+          className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium text-surface-500 hover:bg-surface-100 hover:text-surface-700 transition-colors"
+          title="ヘルプ（各領域の説明）"
+        >
+          <HelpCircle size={13} /> ヘルプ
+        </button>
+      </footer>
+
+      {/* ★★★ 項目9 / FB5 ★★★ */}
+      <HelpTutorial open={helpOpen} onClose={() => setHelpOpen(false)} flowPhase={d.flowPhase} />
+      <HelpOverlay open={helpRegionsOpen} onClose={() => setHelpRegionsOpen(false)} />
     </div>
   );
 };
