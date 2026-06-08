@@ -152,6 +152,26 @@ class Config:
 
 Config.SQLALCHEMY_DATABASE_URI = Config.get_database_uri()
 
+# ===========================================================
+# DBに応じたエンジンオプション最適化
+#   SQLite: "database is locked" 対策（busy_timeout で待機、単一接続寄り）
+#   PostgreSQL: 接続プール
+# ===========================================================
+if str(Config.SQLALCHEMY_DATABASE_URI).startswith("sqlite"):
+    Config.SQLALCHEMY_ENGINE_OPTIONS = {
+        "pool_pre_ping": True,
+        # timeout: ロック時に即エラーにせず最大30秒待つ。
+        # check_same_thread=False: Flask の複数スレッドから利用可能に。
+        "connect_args": {"timeout": 30, "check_same_thread": False},
+    }
+else:
+    Config.SQLALCHEMY_ENGINE_OPTIONS = {
+        "pool_pre_ping": True,
+        "pool_recycle": 280,
+        "pool_size": int(os.environ.get("DB_POOL_SIZE", "5")),
+        "max_overflow": int(os.environ.get("DB_MAX_OVERFLOW", "10")),
+    }
+
 
 class DevelopmentConfig(Config):
     DEBUG = True

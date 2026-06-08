@@ -160,6 +160,12 @@ def register_admin_routes(app: Flask):
             _write_csv(zf, "activity_logs.csv", UserActivityLog.query.all(),
                        ["id", "user_id", "action", "detail", "memo_id", "created_at"])
 
+            # ★ 収集データ2,3: 保存マップから各ノードの由来(origin)一覧を出力
+            #   origin: ai / manual / satellite / relation
+            #   採用satellite = origin=satellite かつ is_satellite=False
+            #   非採用satellite = origin=satellite かつ is_satellite=True
+            _write_node_provenance_csv(zf, "node_provenance.csv")
+
         buf.seek(0)
         return send_file(
             buf,
@@ -167,6 +173,35 @@ def register_admin_routes(app: Flask):
             as_attachment=True,
             download_name=f"export_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.zip",
         )
+
+
+def _write_node_provenance_csv(zf, filename):
+    """保存済みマップの各ノードの由来(origin)を1行ずつ書き出す。"""
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "memo_id", "node_id", "label", "origin",
+        "is_satellite", "is_relation", "adopted",
+    ])
+    for km in KnowledgeMap.query.all():
+        for node in (km.nodes or []):
+            data = node.get("data", {}) if isinstance(node, dict) else {}
+            origin = data.get("origin")
+            is_sat = bool(data.get("isSatellite"))
+            is_rel = bool(data.get("isRelation"))
+            if origin is None:
+                origin = "satellite" if is_sat else ("relation" if is_rel else "ai")
+            # 周辺概念の採用フラグ: origin=satellite かつ 現在 satellite でない = 採用済み
+            adopted = ""
+            if origin == "satellite":
+                adopted = "yes" if not is_sat else "no"
+            writer.writerow([
+                km.memo_id,
+                node.get("id") if isinstance(node, dict) else "",
+                data.get("label") or (node.get("label") if isinstance(node, dict) else ""),
+                origin, is_sat, is_rel, adopted,
+            ])
+    zf.writestr(filename, output.getvalue())
 
 
 def _write_csv(zf, filename, records, columns):

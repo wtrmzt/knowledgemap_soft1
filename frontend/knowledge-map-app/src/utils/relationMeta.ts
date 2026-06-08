@@ -11,6 +11,7 @@
 
 const previewStore = new Map<string, string[]>();
 const depthStore = new Map<string, number>();
+const originStore = new Map<string, string>(); // ノード由来: 'ai' | 'manual' | 'satellite' | 'relation'
 
 export const relationMeta = {
   setPreview(nodeId: string, labels: string[]): void {
@@ -25,8 +26,16 @@ export const relationMeta = {
   getDepth(nodeId: string): number | undefined {
     return depthStore.get(nodeId);
   },
+  // ★ 収集データ3: ノードの由来（手動/AI/周辺概念/関連科目）を変換非依存で保持
+  setOrigin(nodeId: string, origin: string): void {
+    originStore.set(nodeId, origin);
+  },
+  getOrigin(nodeId: string): string | undefined {
+    return originStore.get(nodeId);
+  },
   clear(): void {
     previewStore.clear();
     depthStore.clear();
+    originStore.clear();
   },
 };

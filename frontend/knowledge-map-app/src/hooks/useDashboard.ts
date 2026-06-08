@@ -187,6 +187,7 @@ function expandSubGraph(
       relationDepth: depthMap.get(n.id) ?? 0,
       group: subjectName,
       satellites: [],
+      origin: 'relation',  // ★ 収集データ3
     },
     label: n.label || n.id || '(不明)',
     sentence: n.sentence || '',
@@ -195,8 +196,12 @@ function expandSubGraph(
   const nodes = resolveOverlaps(rawMapped, existingNodes);
 
   // ★ FB2: 変換で data.relationDepth が落ちても効くよう、ストアにも深さを保存
+  //   ★ 収集データ3: origin もストアに保存
   rawNodes.forEach((rn, i) => {
-    if (nodes[i]) relationMeta.setDepth(nodes[i].id, depthMap.get(rn.id) ?? 0);
+    if (nodes[i]) {
+      relationMeta.setDepth(nodes[i].id, depthMap.get(rn.id) ?? 0);
+      relationMeta.setOrigin(nodes[i].id, 'relation');
+    }
   });
 
   const oldToNew = new Map<string, string>();
@@ -296,6 +301,8 @@ export function useDashboard() {
   useEffect(() => { titleRef.current = memoTitle; }, [memoTitle]);
   const contentRef = useRef(memoContent);
   useEffect(() => { contentRef.current = memoContent; }, [memoContent]);
+  // ★ 収集データ1: 直近で編集イベントを記録した本文（重複記録防止）
+  const lastSavedContentRef = useRef<string | null>(null);
 
   const surroundingConcepts: SurroundingConceptsMap = {};
 
@@ -716,10 +723,12 @@ export function useDashboard() {
             label: c.label, sentence: rel, extend_query: '',
             status: 'satellite' as NodeStatus, isSatellite: true,
             parentNodeId: parent.id, isRelation: false, satellites: [],
+            origin: 'satellite',  // ★ 収集データ3
           },
           label: c.label, sentence: rel,
         };
       });
+      rawSat.forEach((s) => relationMeta.setOrigin(s.id, 'satellite')); // ★ 収集データ3
       // 既存ノード(関連科目・他衛星含む)との重なりを解消してから配置
       const satN = resolveOverlaps(rawSat, cur);
       const satE: MapEdge[] = satN.map((s) => ({
@@ -729,7 +738,13 @@ export function useDashboard() {
 
       setNodes((p) => { const nn = [...p, ...satN]; nodesRef.current = nn; return nn; });
       setEdges((p) => { const ne = [...p, ...satE]; edgesRef.current = ne; return ne; });
-      loggingService.logActivity('surrounding_fetch' as any, { parent: parentLabel, count: satN.length }, memoRef.current?.id);
+      // ★ 収集データ2: 提示した周辺概念（採用の母集団）を記録
+      loggingService.logActivity('satellite_suggested' as any, {
+        parent: parentLabel,
+        labels: satN.map((s) => s.label).filter(Boolean),
+        count: satN.length,
+        source: 'manual_fetch',
+      }, memoRef.current?.id);
       scheduleAutoSave(); // ★ 項目6
     } catch (e) {
       console.warn('周辺概念の追加取得失敗:', e);
@@ -762,19 +777,42 @@ export function useDashboard() {
       const savableNodes = nodesRef.current
         .filter((n) => !isTransient(n))
         .map((n) => {
-          // ★ 関連ノードは変換で落ちた relationDepth をストアから補完して保存（再読込で復元できる）
+          const extra: Record<string, unknown> = {};
+          // ★ 関連ノードは変換で落ちた relationDepth をストアから補完して保存
           if (n.data?.isRelation) {
             const depth = relationMeta.getDepth(n.id);
-            if (typeof depth === 'number') {
-              return { ...n, data: { ...n.data, relationDepth: depth } };
-            }
+            if (typeof depth === 'number') extra.relationDepth = depth;
           }
-          return n;
+          // ★ 収集データ3: ノードの由来フラグ origin を保存マップに永続化
+          //   昇格済み周辺概念も origin='satellite' を保持 → 採用/非採用の判別に使える
+          const origin = relationMeta.getOrigin(n.id)
+            || (n.data as any)?.origin
+            || (n.data?.isSatellite ? 'satellite'
+              : n.data?.isRelation ? 'relation'
+              : undefined);
+          if (origin) extra.origin = origin;
+          return Object.keys(extra).length ? { ...n, data: { ...n.data, ...extra } } : n;
         });
       const savableIds = new Set(savableNodes.map((n) => n.id));
       const savableEdges = edgesRef.current.filter(
         (e) => savableIds.has(e.source) && savableIds.has(e.target),
       );
+
+      // ★ 収集データ1: メモ本文が前回保存から変わっていれば編集イベントを記録
+      //   （件数=編集回数 / created_at の時系列=文字数推移）
+      const content = contentRef.current || '';
+      if (content !== lastSavedContentRef.current) {
+        lastSavedContentRef.current = content;
+        const realCount = nodesRef.current.filter(
+          (n) => !n.data?.isSatellite && !n.data?.isRelation && !isTransient(n),
+        ).length;
+        loggingService.logActivity('memo_edit' as any, {
+          char_count: content.length,
+          node_count: savableNodes.length,
+          real_node_count: realCount,
+          edge_count: savableEdges.length,
+        }, memoRef.current.id);
+      }
 
       const tasks: Promise<unknown>[] = [];
 
@@ -874,10 +912,13 @@ export function useDashboard() {
           extend_query: n.extend_query || n.data?.extend_query || '',
           status: 'default' as NodeStatus,
           isSatellite: false, isRelation: false, satellites: [],
+          origin: 'ai',  // ★ 収集データ3: AI生成ノード
         },
         label: n.label || n.data?.label, sentence: n.sentence || n.data?.sentence,
         extend_query: n.extend_query || n.data?.extend_query,
       }));
+      // ★ 収集データ3: 変換非依存ストアにも由来を記録
+      raw.forEach((n) => relationMeta.setOrigin(n.id, 'ai'));
       const rawEdges: MapEdge[] = (map.edges || []).map((e: any) => ({
         id: e.id, source: e.source, target: e.target,
         label: e.label || '', isSatellite: false, isRelation: false,
@@ -888,7 +929,13 @@ export function useDashboard() {
       edgesRef.current = rawEdges; nodesRef.current = layout;
       setPhase('revise');
       setFlowPhase('edit'); // ★ 項目3: 初期マップ作成 → マップ編集へ
-      loggingService.logActivity('map_generate', { node_count: layout.length }, memo.id);
+      lastSavedContentRef.current = content; // 生成直後の本文を基準に
+      loggingService.logActivity('map_generate', {
+        node_count: layout.length,
+        edge_count: rawEdges.length,
+        char_count: (content || '').length,
+        ai_labels: raw.map((n) => n.label).filter(Boolean),
+      }, memo.id);
 
       // (A) 周辺概念 → satellite
       // ★ 管理者機能D: 周辺概念の介入度（Lv1: 取得しない / Lv2: ラベルのみ / Lv3: フル）
@@ -915,9 +962,10 @@ export function useDashboard() {
                 position: placeSatellitePos(parent.position, fresh.length, ci),
                 data: { label: c.label, sentence: rel, extend_query: '',
                   status: 'satellite' as NodeStatus, isSatellite: true, parentNodeId: parent.id,
-                  isRelation: false, satellites: [] },
+                  isRelation: false, satellites: [], origin: 'satellite' },
                 label: c.label, sentence: rel,
               });
+              relationMeta.setOrigin(sid, 'satellite'); // ★ 収集データ3
               satE.push({ id: generateId('sedge'), source: parent.id, target: sid,
                 label: rel, isSatellite: true, isRelation: false });
             });
@@ -925,6 +973,12 @@ export function useDashboard() {
           if (satN.length > 0) {
             setNodes((p) => { const nn = [...p, ...satN]; nodesRef.current = nn; return nn; });
             setEdges((p) => { const ne = [...p, ...satE]; edgesRef.current = ne; return ne; });
+            // ★ 収集データ2: 提示した周辺概念（採用の母集団）を記録
+            loggingService.logActivity('satellite_suggested' as any, {
+              labels: satN.map((s) => s.label).filter(Boolean),
+              count: satN.length,
+              source: 'bulk',
+            }, memoRef.current?.id);
           }
         })
         .catch((e) => console.warn('周辺概念取得失敗:', e));
@@ -1017,6 +1071,10 @@ export function useDashboard() {
           if (isRelation && typeof relationDepth === 'number') {
             relationMeta.setDepth(nodeId, relationDepth);
           }
+          // ★ 収集データ3: 保存済み origin を復元（無ければ種別から推定）
+          const origin = dIn.origin
+            || (isSatellite ? 'satellite' : isRelation ? 'relation' : 'ai');
+          relationMeta.setOrigin(nodeId, origin);
           return {
             id: nodeId,
             type: 'custom',
@@ -1031,6 +1089,7 @@ export function useDashboard() {
               relationOriginId: dIn.relationOriginId,
               relationDepth,
               group: dIn.group,
+              origin,
               satellites: dIn.satellites || [],
             },
             label, sentence, extend_query: extendQuery,
@@ -1085,32 +1144,49 @@ export function useDashboard() {
         id: uniqueId, type: 'custom', position: { x: 0, y: 0 },
         data: { label: r.label || keyword, sentence: r.sentence || '',
           extend_query: r.extend_query || '', status: 'default' as NodeStatus,
-          isSatellite: false, isRelation: false, satellites: [] },
+          isSatellite: false, isRelation: false, satellites: [],
+          origin: 'manual' },  // ★ 収集データ3: 手動追加ノード
         label: r.label || keyword, sentence: r.sentence || '', extend_query: r.extend_query || '',
       };
+      relationMeta.setOrigin(uniqueId, 'manual'); // ★ 収集データ3
       setNodes((prev) => {
         // 念のため既存IDと衝突しないことを保証
-        if (prev.some((p) => p.id === nn.id)) nn.id = generateId('manual2');
+        if (prev.some((p) => p.id === nn.id)) { nn.id = generateId('manual2'); relationMeta.setOrigin(nn.id, 'manual'); }
         const real = prev.filter((n) => !n.data?.isSatellite && !n.data?.isRelation);
         const others = prev.filter((n) => n.data?.isSatellite || n.data?.isRelation);
         const nn2 = [...computeRadialLayout([...real, nn], edgesRef.current), ...others];
         nodesRef.current = nn2;
         return nn2;
       });
+      loggingService.logActivity('node_add_manual' as any, {
+        node_id: nn.id, label: nn.data!.label, keyword,
+      }, memoRef.current?.id);
       scheduleAutoSave(); // ★ 項目6
     } catch (e) { console.error('ノード追加エラー:', e); }
   }, [scheduleAutoSave]);
 
   const handleSatelliteAdd = useCallback((satNodeId: string) => {
+    let adoptedLabel = '';
     setNodes((prev) => {
-      const nn = prev.map((n) =>
-        n.id === satNodeId ? { ...n, data: { ...n.data!, isSatellite: false, status: 'default' as NodeStatus } } : n);
+      const nn = prev.map((n) => {
+        if (n.id === satNodeId) {
+          adoptedLabel = n.label || n.data?.label || '';
+          // 採用後も origin='satellite' を保持（採用/非採用の区別のため）
+          return { ...n, data: { ...n.data!, isSatellite: false, status: 'default' as NodeStatus, origin: 'satellite' } };
+        }
+        return n;
+      });
       nodesRef.current = nn; return nn;
     });
     setEdges((prev) => {
       const ne = prev.map((e) => (e.target === satNodeId && e.isSatellite) ? { ...e, isSatellite: false } : e);
       edgesRef.current = ne; return ne;
     });
+    relationMeta.setOrigin(satNodeId, 'satellite');
+    // ★ 収集データ2: 周辺概念の「採用」を記録（非採用 = 提示 − 採用 で算出）
+    loggingService.logActivity('satellite_adopted' as any, {
+      node_id: satNodeId, label: adoptedLabel,
+    }, memoRef.current?.id);
     scheduleAutoSave(); // ★ 項目6: 衛星をマップに昇格 → 保存
   }, [scheduleAutoSave]);
 

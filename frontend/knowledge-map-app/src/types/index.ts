@@ -76,6 +76,8 @@ export interface MapNodeData {
   relationDepth?: number;
   /** 候補ノードの関連科目介入度（2:科目名のみ / 3:部分木接続）。管理者機能D */
   relationLevel?: number;
+  /** ノードの由来（収集データ）: 'ai' | 'manual' | 'satellite' | 'relation' */
+  origin?: 'ai' | 'manual' | 'satellite' | 'relation' | string;
   /** 科目グループ名 */
   group?: string;
   [key: string]: unknown;
@@ -305,8 +307,12 @@ export type LogAction =
   | 'map_generate'
   | 'mode_switch'
   | 'node_add'
+  | 'node_add_manual'
   | 'node_connect'
   | 'satellite_add'
+  | 'satellite_suggested'
+  | 'satellite_adopted'
+  | 'memo_edit'
   | 'relation_expanded'
   | 'map_rollback'
   | 'map_autosave';

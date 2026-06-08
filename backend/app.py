@@ -11,9 +11,12 @@ Flask アプリケーション エントリポイント
 """
 import logging
 import os
+import sqlite3
 
 from flask import Flask, jsonify, send_from_directory
 from flask_cors import CORS
+from sqlalchemy import event
+from sqlalchemy.engine import Engine
 
 from config import Config
 from models import db
@@ -21,6 +24,26 @@ from routes import register_all_routes
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+# ===========================================================
+# SQLite の "database is locked" 対策
+#   - WAL モード: 読み取りと書き込みの並行性を高める
+#   - busy_timeout: 書き込みロック時に即エラーにせず最大30秒待つ
+#   - synchronous=NORMAL: WAL では安全かつ高速
+#   PostgreSQL など他DBでは何もしない。
+# ===========================================================
+@event.listens_for(Engine, "connect")
+def _set_sqlite_pragma(dbapi_connection, connection_record):
+    if isinstance(dbapi_connection, sqlite3.Connection):
+        try:
+            cur = dbapi_connection.cursor()
+            cur.execute("PRAGMA journal_mode=WAL;")
+            cur.execute("PRAGMA busy_timeout=30000;")  # 30秒
+            cur.execute("PRAGMA synchronous=NORMAL;")
+            cur.close()
+        except Exception as e:
+            logger.warning("SQLite PRAGMA 設定に失敗: %s", e)
 
 # フロントエンドビルド出力ディレクトリ(build.sh が backend/static にコピー済み)
 FRONTEND_DIST = os.path.join(
