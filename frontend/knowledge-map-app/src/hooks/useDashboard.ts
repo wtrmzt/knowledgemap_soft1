@@ -818,7 +818,16 @@ export function useDashboard() {
 
       // ノードが 0 件のときはマップを保存しない（生成前/空メモの誤上書き防止）。
       if (savableNodes.length > 0) {
-        tasks.push(mapService.updateMap(memoRef.current.id, savableNodes, savableEdges));
+        // Ensure nodes conform to MapNode typings (e.g. data.label must be string)
+        const nodesForSave = savableNodes.map((n) => ({
+          ...n,
+          data: {
+            ...(n.data || {}),
+            label: (n.data && n.data.label) ? n.data.label : '',
+          },
+        })) as any; // cast to satisfy MapNode[] expected by updateMap
+
+        tasks.push(mapService.updateMap(memoRef.current.id, nodesForSave, savableEdges));
       }
 
       // patchMemo は memoService に追加された関数. 失敗してもマップ保存だけは進める
