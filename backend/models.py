@@ -81,12 +81,16 @@ class Memo(db.Model):
     edge_count = db.Column(db.Integer, nullable=False, default=0)
     is_archived = db.Column(db.Boolean, nullable=False, default=False, index=True)
 
+    # ===== 機能3: 過去・未来の科目関連についての記述（左パネル下部） =====
+    relation_note = db.Column(db.Text, nullable=True, default="")
+
     def to_dict(self):
         return {
             "id": self.id,
             "user_id": self.user_id,
             "content": self.content,
             "mode": self.mode,
+            "relation_note": self.relation_note or "",
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
@@ -188,10 +192,15 @@ class AppSettings(db.Model):
             "topic_detection": 3,  # 1: 可視化なし / 2: 状態可視化のみ / 3: 提案カード(フル)
             "satellite": 3,        # 1: 非表示 / 2: ラベルのみ / 3: フル提示
             "relation": 3,         # 1: 非表示 / 2: 科目名のみ / 3: 部分木接続
+            "edge_explanation": 3, # 1: OFF / 2: 単語のみ / 3: 説明文（機能2）
+        },
+        "features": {
+            "relation_note": True,  # 過去・未来の記述項目（左パネル下部）の表示（機能3）
         },
         "prompts": {
             "map_generation": "",  # 空 = ai_service の既定プロンプト
             "surrounding": "",
+            "edge_explanation": "",  # エッジ説明（機能2）
         },
     }
 
@@ -203,6 +212,7 @@ class AppSettings(db.Model):
         return {
             "enabled_modes": {**d["enabled_modes"], **(raw.get("enabled_modes") or {})},
             "intervention": {**d["intervention"], **(raw.get("intervention") or {})},
+            "features": {**d["features"], **(raw.get("features") or {})},
             "prompts": {**d["prompts"], **(raw.get("prompts") or {})},
         }
 
@@ -227,4 +237,32 @@ class AppSettings(db.Model):
         return {
             "data": self._merged(self.data),
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
+class EdgeExplanation(db.Model):
+    """
+    エッジ（2ノード間の関係）のAI説明キャッシュ（機能2）。
+      - source_label / target_label をキーに、単語(word)と説明文(sentence)を保存。
+      - 同じ組み合わせの2回目以降はDBから即返す（再生成しない）。
+    """
+    __tablename__ = "edge_explanations"
+
+    id = db.Column(db.Integer, primary_key=True)
+    source_label = db.Column(db.String(300), nullable=False, index=True)
+    target_label = db.Column(db.String(300), nullable=False, index=True)
+    word = db.Column(db.String(300), default="")       # Lv2: 単語のみ
+    sentence = db.Column(db.Text, default="")          # Lv3: 説明文
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        Index("ix_edge_pair", "source_label", "target_label"),
+    )
+
+    def to_dict(self):
+        return {
+            "source_label": self.source_label,
+            "target_label": self.target_label,
+            "word": self.word or "",
+            "sentence": self.sentence or "",
         }

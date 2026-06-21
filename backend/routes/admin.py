@@ -92,6 +92,7 @@ def register_admin_routes(app: Flask):
         new_data = {
             "enabled_modes": dict(current["enabled_modes"]),
             "intervention": dict(current["intervention"]),
+            "features": dict(current.get("features", {})),
             "prompts": dict(current["prompts"]),
         }
 
@@ -106,7 +107,7 @@ def register_admin_routes(app: Flask):
 
         iv = incoming.get("intervention")
         if isinstance(iv, dict):
-            for k in ("topic_detection", "satellite", "relation"):
+            for k in ("topic_detection", "satellite", "relation", "edge_explanation"):
                 if k in iv:
                     try:
                         lv = int(iv[k])
@@ -114,9 +115,15 @@ def register_admin_routes(app: Flask):
                         lv = new_data["intervention"][k]
                     new_data["intervention"][k] = min(3, max(1, lv))
 
+        ft = incoming.get("features")
+        if isinstance(ft, dict):
+            for k in ("relation_note",):
+                if k in ft:
+                    new_data["features"][k] = bool(ft[k])
+
         pr = incoming.get("prompts")
         if isinstance(pr, dict):
-            for k in ("map_generation", "surrounding"):
+            for k in ("map_generation", "surrounding", "edge_explanation"):
                 if k in pr and pr[k] is not None:
                     new_data["prompts"][k] = str(pr[k])[:8000]  # 上限を設けて保護
 
@@ -135,12 +142,14 @@ def register_admin_routes(app: Flask):
             # 未更新でもフロントが安全側（全有効・Lv3）にフォールバックできる既定値を返す
             return jsonify({
                 "enabled_modes": {"reflection": True, "research": True, "idea": True},
-                "intervention": {"topic_detection": 3, "satellite": 3, "relation": 3},
+                "intervention": {"topic_detection": 3, "satellite": 3, "relation": 3, "edge_explanation": 3},
+                "features": {"relation_note": True},
             })
         data = AppSettings.get_data()
         return jsonify({
             "enabled_modes": data["enabled_modes"],
             "intervention": data["intervention"],
+            "features": data.get("features", {"relation_note": True}),
         })
 
     @app.route("/api/admin/export_csv", methods=["GET"])

@@ -175,6 +175,42 @@ def generate_node_from_keyword(keyword: str) -> dict:
         }
 
 
+def generate_edge_explanation(source_label: str, target_label: str) -> dict:
+    """
+    2ノード間の関係を説明する（機能2）。
+      - word: 関係を表す短い単語/句（Lv2用）
+      - sentence: 80字程度の説明文（Lv3用）
+    管理者がプロンプト(edge_explanation)を設定していれば前置きとして反映する。
+    返り値: {"word": str, "sentence": str}
+    """
+    base = (
+        "あなたは学習支援AIです。2つの概念ノードの「つながり（関係）」を説明します。\n"
+        "次のJSON形式のみで出力してください（前置き・コードフェンス禁止）:\n"
+        '{"word":"関係を表す短い語句(15字以内)","sentence":"2概念の関係の説明(80字程度)"}'
+    )
+    override = _get_prompt_overrides().get("edge_explanation", "")
+    system_prompt = f"{override}\n\n{base}" if override else base
+    try:
+        client = _get_client()
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"概念A: {source_label}\n概念B: {target_label}"},
+            ],
+            temperature=0.5,
+            response_format={"type": "json_object"},
+        )
+        result = json.loads(response.choices[0].message.content)
+        return {
+            "word": str(result.get("word", ""))[:100],
+            "sentence": str(result.get("sentence", ""))[:500],
+        }
+    except Exception as e:
+        logger.error("[generate_edge_explanation] エラー: %s", e)
+        return {"word": "", "sentence": ""}
+
+
 # =============================================
 # 周辺概念の自動取得
 # =============================================

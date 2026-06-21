@@ -3,8 +3,78 @@ from flask import Flask, request, jsonify
 from models import db, KnowledgeMap, MapHistory
 from auth import token_required
 
+# 機能2: エッジ説明モデル / 設定は未更新環境でも落ちないよう防御的に取り込む
+try:
+    from models import EdgeExplanation
+except ImportError:
+    EdgeExplanation = None
+try:
+    from models import AppSettings
+except ImportError:
+    AppSettings = None
+
 
 def register_map_routes(app: Flask):
+
+    # ===== 機能2: エッジ（2ノード間）の説明を取得 =====
+    #   DBキャッシュにあれば即返す。無ければAI生成→保存。
+    #   介入度 Lv1 のときは生成せず disabled を返す。
+    @app.route("/api/edges/explain", methods=["POST"])
+    @token_required
+    def explain_edge():
+        body = request.get_json() or {}
+        source = (body.get("source_label") or "").strip()
+        target = (body.get("target_label") or "").strip()
+        if not source or not target:
+            return jsonify({"error": "source_label と target_label は必須です"}), 400
+
+        # 介入度（Lv1: OFF）
+        level = 3
+        if AppSettings is not None:
+            try:
+                level = int(AppSettings.get_data()["intervention"].get("edge_explanation", 3))
+            except Exception:
+                level = 3
+        if level <= 1:
+            return jsonify({"disabled": True, "level": level})
+
+        # キャッシュ参照（向きの違いも吸収して再利用）
+        cached = None
+        if EdgeExplanation is not None:
+            cached = (EdgeExplanation.query
+                      .filter_by(source_label=source, target_label=target).first()
+                      or EdgeExplanation.query
+                      .filter_by(source_label=target, target_label=source).first())
+        if cached is not None:
+            d = cached.to_dict()
+            d["level"] = level
+            d["cached"] = True
+            return jsonify(d)
+
+        # 生成
+        try:
+            from ai_service import generate_edge_explanation
+            gen = generate_edge_explanation(source, target)
+        except Exception as e:
+            return jsonify({"error": str(e), "word": "", "sentence": ""}), 200
+
+        # 保存（モデルがあれば）
+        if EdgeExplanation is not None:
+            try:
+                row = EdgeExplanation(
+                    source_label=source, target_label=target,
+                    word=gen.get("word", ""), sentence=gen.get("sentence", ""),
+                )
+                db.session.add(row)
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+
+        return jsonify({
+            "source_label": source, "target_label": target,
+            "word": gen.get("word", ""), "sentence": gen.get("sentence", ""),
+            "level": level, "cached": False,
+        })
 
     @app.route("/api/maps/<int:memo_id>", methods=["GET"])
     @token_required

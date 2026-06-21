@@ -15,6 +15,20 @@ def register_memo_routes(app: Flask):
         ).all()
         return jsonify({"memos": [m.to_dict() for m in memos]})
 
+    # ===== 機能3: 過去・未来の科目関連の記述を保存 =====
+    @app.route("/api/memos/<int:memo_id>/relation_note", methods=["PUT", "POST"])
+    @token_required
+    def save_relation_note(memo_id):
+        user_db_id = g.current_user["user_db_id"]
+        memo = Memo.query.filter_by(id=memo_id, user_id=user_db_id).first()
+        if memo is None:
+            return jsonify({"error": "メモが見つかりません"}), 404
+        body = request.get_json() or {}
+        note = body.get("relation_note", body.get("note", ""))
+        memo.relation_note = ("" if note is None else str(note))[:20000]
+        db.session.commit()
+        return jsonify({"ok": True, "relation_note": memo.relation_note})
+
     @app.route("/api/memos_with_map", methods=["POST"])
     @token_required
     def create_memo_with_map():

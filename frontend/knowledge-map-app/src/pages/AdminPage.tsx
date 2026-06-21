@@ -110,6 +110,15 @@ const FEATURE_META: {
       3: 'Lv3 部分木接続：関連科目の部分木を今のマップにドッキング（フル）。',
     },
   },
+  {
+    key: 'edge_explanation',
+    title: 'エッジの説明（アイコン＋ポップオーバー）',
+    levels: {
+      1: 'Lv1 OFF：エッジにアイコンを表示しない。',
+      2: 'Lv2 単語のみ：吹き出しに関係を表す短い語句のみ表示。',
+      3: 'Lv3 説明文：吹き出しに2概念の関係の説明文を表示（フル）。',
+    },
+  },
 ];
 
 const SettingsPanel: React.FC = () => {
@@ -256,7 +265,46 @@ const SettingsPanel: React.FC = () => {
               className="mt-1 w-full text-xs rounded-lg border border-surface-200 px-3 py-2 focus:outline-none focus:ring-1 focus:ring-primary-400"
             />
           </div>
+          <div>
+            <label className="text-[11px] font-medium text-surface-600">エッジの説明</label>
+            <textarea
+              value={settings.prompts.edge_explanation}
+              onChange={(e) => update({
+                prompts: { ...settings.prompts, edge_explanation: e.target.value },
+              })}
+              rows={4}
+              placeholder="（例）2つの概念の因果関係や順序に注目して説明してください。"
+              className="mt-1 w-full text-xs rounded-lg border border-surface-200 px-3 py-2 focus:outline-none focus:ring-1 focus:ring-primary-400"
+            />
+          </div>
         </div>
+      </section>
+
+      {/* 表示機能のON/OFF */}
+      <section className="bg-white rounded-xl border border-surface-200 p-4">
+        <h3 className="text-sm font-semibold text-surface-700 mb-3">表示機能のON/OFF</h3>
+        <div className="flex flex-wrap gap-2">
+          {(() => {
+            const on = settings.features?.relation_note ?? true;
+            return (
+              <button
+                onClick={() => update({
+                  features: { ...settings.features, relation_note: !on },
+                })}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                  on
+                    ? 'bg-primary-600 text-white border-primary-600'
+                    : 'bg-white text-surface-400 border-surface-200'
+                }`}
+              >
+                過去・未来の記述項目：{on ? 'ON' : 'OFF'}
+              </button>
+            );
+          })()}
+        </div>
+        <p className="text-[11px] text-surface-400 mt-2">
+          学習者の左メモパネル下部にある「過去・未来の科目とのつながり」記述欄の表示を切り替えます。
+        </p>
       </section>
 
       {/* 保存 */}

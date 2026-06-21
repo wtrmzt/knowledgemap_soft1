@@ -11,11 +11,13 @@ import ReactFlow, {
   Controls, Background, MiniMap,
   useNodesState, useEdgesState, addEdge,
   type Connection, type Edge, type Node,
-  BackgroundVariant, type NodeTypes,
+  BackgroundVariant, type NodeTypes, type EdgeTypes,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import CustomNode from './CustomNode';
+import ExplainEdge from './ExplainEdge';
 import { EdgeLabelDialog } from './EdgeLabelDialog';
+import { mapService } from '@/services';
 import { toFlowNodes, toFlowEdges, fromFlowNodes, fromFlowEdges, generateId } from '@/utils';
 import type { MapNode, MapEdge, NodeStatus, SurroundingConceptsMap } from '@/types';
 
@@ -29,6 +31,8 @@ interface Props {
   onConnect: (source: string, target: string, label: string) => void;
   onAutoSave: () => void;
   onSatelliteAdd: (nodeId: string) => void;
+  /** 機能2: エッジ説明の介入度（1:OFF / 2:単語 / 3:説明文） */
+  edgeExplanationLevel?: number;
 }
 
 function buildPosMap(nodes: MapNode[] | Node[]): Record<string, { x: number; y: number }> {
@@ -42,8 +46,35 @@ export const KnowledgeMapDisplay: React.FC<Props> = ({
   nodeStatuses, surroundingConcepts,
   onNodesChange: setMapNodes, onEdgesChange: setMapEdges,
   onConnect: onExtConnect, onAutoSave, onSatelliteAdd,
+  edgeExplanationLevel = 3,
 }) => {
   const nodeTypes: NodeTypes = useMemo(() => ({ custom: CustomNode }), []);
+  const edgeTypes: EdgeTypes = useMemo(() => ({ explain: ExplainEdge }), []);
+
+  // 安定参照（毎回作り直すとエッジが再生成され、ポップオーバーの状態が失われる）
+  const fetchEdgeExplanation = useCallback(
+    (s: string, t: string) => mapService.getEdgeExplanation(s, t), []);
+
+  // 機能2: 対象エッジ（周辺概念の点線でない通常エッジ）にアイコンを付与
+  const decorateEdges = useCallback((eds: Edge[], srcNodes: MapNode[]): Edge[] => {
+    if (edgeExplanationLevel <= 1) return eds;
+    const labelOf: Record<string, string> = {};
+    srcNodes.forEach((n) => { labelOf[n.id] = n.label || n.data?.label || ''; });
+    return eds.map((e) => {
+      if ((e.data as any)?.isSatellite || (e as any).isSatellite) return e;
+      return {
+        ...e,
+        type: 'explain',
+        data: {
+          ...(e.data || {}),
+          explLevel: edgeExplanationLevel,
+          sourceLabel: labelOf[e.source] || '',
+          targetLabel: labelOf[e.target] || '',
+          fetchExplanation: fetchEdgeExplanation,
+        },
+      };
+    });
+  }, [edgeExplanationLevel, fetchEdgeExplanation]);
 
   // 初回レンダリング用のエッジ（ハンドル計算済み）
   const initPosMap = useMemo(() => buildPosMap(mapNodes), [mapNodes]);
@@ -51,7 +82,7 @@ export const KnowledgeMapDisplay: React.FC<Props> = ({
     toFlowNodes(mapNodes, nodeStatuses, surroundingConcepts),
   );
   const [flowEdges, setFlowEdges, onEChange] = useEdgesState(
-    toFlowEdges(mapEdges, initPosMap),
+    decorateEdges(toFlowEdges(mapEdges, initPosMap), mapNodes),
   );
 
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -69,8 +100,8 @@ export const KnowledgeMapDisplay: React.FC<Props> = ({
   // ===== 外部エッジ更新（ハンドル計算込み） =====
   useEffect(() => {
     const pm = buildPosMap(mapNodes);
-    setFlowEdges(toFlowEdges(mapEdges, pm));
-  }, [mapEdges, mapNodes, setFlowEdges]);
+    setFlowEdges(decorateEdges(toFlowEdges(mapEdges, pm), mapNodes));
+  }, [mapEdges, mapNodes, setFlowEdges, decorateEdges]);
 
   // ===== satellite-add-to-map =====
   useEffect(() => {
@@ -88,21 +119,26 @@ export const KnowledgeMapDisplay: React.FC<Props> = ({
     timerRef.current = setTimeout(onAutoSave, 3000);
   }, [onAutoSave]);
 
-  // ===== ノード変更（選択変更等） =====
-  const handleNChange = useCallback((c: any) => {
-    onNChange(c);
-    setTimeout(() => {
-      setFlowNodes((nds) => {
-        setMapNodes(fromFlowNodes(nds));
-        return nds;
-      });
-    }, 0);
-  }, [onNChange, setFlowNodes, setMapNodes]);
-
-  // ===== ★ 中央クリック ドラッグ処理 =====
+  // 親state同期用に最新の flow ノード/エッジを ref で保持（更新関数内で親を更新しない）
   const flowNodesRef = useRef(flowNodes);
   useEffect(() => { flowNodesRef.current = flowNodes; }, [flowNodes]);
+  const flowEdgesRef = useRef(flowEdges);
+  useEffect(() => { flowEdgesRef.current = flowEdges; }, [flowEdges]);
 
+  // ===== ノード変更（選択変更・ドラッグ移動等） =====
+  const handleNChange = useCallback((c: any) => {
+    onNChange(c); // まず React Flow 内部状態へ反映（ドラッグ追従はこちらで滑らかに）
+    const arr = Array.isArray(c) ? c : [];
+    const dragging = arr.some((ch: any) => ch.type === 'position' && ch.dragging === true);
+    const dragEnded = arr.some((ch: any) => ch.type === 'position' && ch.dragging === false);
+    // ドラッグ中は親state(mapNodes)へ同期しない（同期すると flowNodes が再構築され描画が乱れる）
+    if (dragging) return;
+    // 親stateへの同期は次tickで（描画中の setState を避ける＝警告防止）
+    setTimeout(() => { setMapNodes(fromFlowNodes(flowNodesRef.current)); }, 0);
+    if (dragEnded) schedule(); // ★ ドラッグ移動が確定したら保存
+  }, [onNChange, setMapNodes, schedule]);
+
+  // ===== ★ 中央クリック ドラッグ処理 =====
   const dragRef = useRef<{
     nodeId: string; startX: number; startY: number;
     startNodeX: number; startNodeY: number; zoom: number;
@@ -141,16 +177,11 @@ export const KnowledgeMapDisplay: React.FC<Props> = ({
       if (!dragRef.current) return;
       dragRef.current = null;
       document.body.style.cursor = '';
-      // 位置を親に同期 + エッジハンドル再計算 + 自動保存
-      setFlowNodes((nds) => {
-        setMapNodes(fromFlowNodes(nds));
-        const pm = buildPosMap(nds);
-        setFlowEdges((eds) => {
-          const mapE = fromFlowEdges(eds);
-          return toFlowEdges(mapE, pm);
-        });
-        return nds;
-      });
+      // 位置を親に同期 + エッジハンドル再計算 + 自動保存（更新関数の外で親stateを更新）
+      const nds = flowNodesRef.current;
+      setMapNodes(fromFlowNodes(nds));
+      const pm = buildPosMap(nds);
+      setFlowEdges((eds) => toFlowEdges(fromFlowEdges(eds), pm));
       schedule();
     };
 
@@ -167,7 +198,7 @@ export const KnowledgeMapDisplay: React.FC<Props> = ({
   const handleEChange = useCallback((c: any) => {
     onEChange(c);
     setTimeout(() => {
-      setFlowEdges((eds) => { setMapEdges(fromFlowEdges(eds)); return eds; });
+      setMapEdges(fromFlowEdges(flowEdgesRef.current));
       schedule();
     }, 0);
   }, [onEChange, setFlowEdges, setMapEdges, schedule]);
@@ -219,8 +250,13 @@ export const KnowledgeMapDisplay: React.FC<Props> = ({
         onEdgesChange={handleEChange}
         onConnect={handleConnect}
         onPaneClick={handlePaneClick}
-        nodesDraggable={false}
+        nodesDraggable={true}
+        nodeDragThreshold={6}
+        connectionRadius={36}
+        zoomOnDoubleClick={false}
+        elevateNodesOnSelect
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
         fitView fitViewOptions={{ padding: 0.3 }}
         minZoom={0.2} maxZoom={2}
         proOptions={{ hideAttribution: true }}

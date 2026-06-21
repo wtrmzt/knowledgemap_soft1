@@ -10,7 +10,8 @@ import type { PublicSettings } from '@/types';
 
 export const DEFAULT_PUBLIC_SETTINGS: PublicSettings = {
   enabled_modes: { reflection: true, research: true, idea: true },
-  intervention: { topic_detection: 3, satellite: 3, relation: 3 },
+  intervention: { topic_detection: 3, satellite: 3, relation: 3, edge_explanation: 3 },
+  features: { relation_note: true },
 };
 
 export async function getPublicSettings(): Promise<PublicSettings> {
@@ -19,6 +20,7 @@ export async function getPublicSettings(): Promise<PublicSettings> {
     return {
       enabled_modes: { ...DEFAULT_PUBLIC_SETTINGS.enabled_modes, ...(data.enabled_modes || {}) },
       intervention: { ...DEFAULT_PUBLIC_SETTINGS.intervention, ...(data.intervention || {}) },
+      features: { ...DEFAULT_PUBLIC_SETTINGS.features, ...(data.features || {}) },
     };
   } catch {
     return DEFAULT_PUBLIC_SETTINGS;

@@ -33,8 +33,8 @@ const YEAR_OPTIONS = [
 
 const DashboardPage: React.FC = () => {
   const d = useDashboard();
-  const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const memoIdParam = searchParams.get('memo_id');
   const isNewParam = searchParams.get('new') === '1';
@@ -287,6 +287,9 @@ const DashboardPage: React.FC = () => {
             currentlyWriting={d.currentlyWriting}
             nextSuggestions={d.nextSuggestions}
             detectingTopics={d.detectingTopics}
+            showRelationNote={d.showRelationNote}
+            relationNote={d.relationNote}
+            onRelationNoteChange={d.handleRelationNoteChange}
           />
         </aside>
 
@@ -311,6 +314,7 @@ const DashboardPage: React.FC = () => {
               onNodesChange={d.setNodes} onEdgesChange={d.setEdges}
               onConnect={d.handleConnect} onAutoSave={d.handleAutoSave}
               onSatelliteAdd={d.handleSatelliteAdd}
+              edgeExplanationLevel={d.edgeExplanationLevel}
             />
           )}
 

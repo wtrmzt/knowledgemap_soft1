@@ -86,3 +86,23 @@ export async function detectTopics(
     node_labels: nodeLabels,
   });
 }
+// ===== 機能2: エッジ（2ノード間）の説明を取得（DBキャッシュ→無ければAI生成）=====
+export interface EdgeExplanationResult {
+  source_label?: string;
+  target_label?: string;
+  word: string;
+  sentence: string;
+  level?: number;
+  cached?: boolean;
+  disabled?: boolean;
+}
+
+export async function getEdgeExplanation(
+  sourceLabel: string,
+  targetLabel: string,
+): Promise<EdgeExplanationResult> {
+  return apiPost<EdgeExplanationResult>('/edges/explain', {
+    source_label: sourceLabel,
+    target_label: targetLabel,
+  });
+}

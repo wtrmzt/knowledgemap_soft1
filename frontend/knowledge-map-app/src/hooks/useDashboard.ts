@@ -291,6 +291,12 @@ export function useDashboard() {
   // ★★★ v3.2.1 追加: タイトル ★★★
   const [memoTitle, setMemoTitle] = useState<string>('');
 
+  // ★★★ 機能3: 過去・未来の科目関連の記述 ★★★
+  const [relationNote, setRelationNote] = useState<string>('');
+  const relationNoteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const relationNoteRef = useRef<string>('');
+  useEffect(() => { relationNoteRef.current = relationNote; }, [relationNote]);
+
   const edgesRef = useRef(edges);     useEffect(() => { edgesRef.current = edges; }, [edges]);
   const nodesRef = useRef(nodes);     useEffect(() => { nodesRef.current = nodes; }, [nodes]);
   const memoRef = useRef(currentMemo); useEffect(() => { memoRef.current = currentMemo; }, [currentMemo]);
@@ -818,16 +824,7 @@ export function useDashboard() {
 
       // ノードが 0 件のときはマップを保存しない（生成前/空メモの誤上書き防止）。
       if (savableNodes.length > 0) {
-        // Ensure nodes conform to MapNode typings (e.g. data.label must be string)
-        const nodesForSave = savableNodes.map((n) => ({
-          ...n,
-          data: {
-            ...(n.data || {}),
-            label: (n.data && n.data.label) ? n.data.label : '',
-          },
-        })) as any; // cast to satisfy MapNode[] expected by updateMap
-
-        tasks.push(mapService.updateMap(memoRef.current.id, nodesForSave, savableEdges));
+        tasks.push(mapService.updateMap(memoRef.current.id, savableNodes, savableEdges));
       }
 
       // patchMemo は memoService に追加された関数. 失敗してもマップ保存だけは進める
@@ -905,6 +902,11 @@ export function useDashboard() {
         map = r.map;
       }
       setCurrentMemo(memo);
+
+      // ★ 機能3: 生成前に書いた「過去・未来の記述」をこのメモに保存
+      if (relationNoteRef.current && relationNoteRef.current.trim()) {
+        memoService.saveRelationNote(memo.id, relationNoteRef.current).catch(() => {});
+      }
 
       // ★ サーバが付けたタイトルがあれば反映するが、ユーザーが既に編集していた
       //   場合は上書きしない(編集中の値を保持).
@@ -1017,6 +1019,7 @@ export function useDashboard() {
       setCurrentMemo(memo);
       setMemoTitle((memo as any).title || '新しい振り返り');
       setMemoContent('');
+      setRelationNote('');
       setNodes([]);
       setEdges([]);
       nodesRef.current = [];
@@ -1051,6 +1054,7 @@ export function useDashboard() {
       setCurrentMemo(memo);
       setMemoTitle((memo as any).title || '');
       setMemoContent(memo.content || '');
+      setRelationNote((memo as any).relation_note || '');
       setMode(memo.mode);
 
       const rawMap = await mapService.getMap(memoId).catch((err) => {
@@ -1200,8 +1204,30 @@ export function useDashboard() {
   }, [scheduleAutoSave]);
 
   const handleConnect = useCallback((src: string, tgt: string, label: string) => {
+    if (!src || !tgt || src === tgt) return;
     const ne: MapEdge = { id: generateId('edge'), source: src, target: tgt, label: label || '', isSatellite: false, isRelation: false };
-    setEdges((prev) => { const nw = [...prev, ne]; edgesRef.current = nw; return nw; });
+    setEdges((prev) => {
+      // 同じ向きの重複エッジは追加しない
+      if (prev.some((e) => e.source === src && e.target === tgt)) return prev;
+      const nw = [...prev, ne]; edgesRef.current = nw; return nw;
+    });
+    loggingService.logActivity('node_connect', { source: src, target: tgt, label: label || '' }, memoRef.current?.id);
+    scheduleAutoSave(); // ★ 機能1: 手動エッジを保存
+  }, [scheduleAutoSave]);
+
+  // ★★★ 機能3: 記述更新→デバウンスでDB保存 ★★★
+  const handleRelationNoteChange = useCallback((value: string) => {
+    setRelationNote(value);
+    if (relationNoteTimerRef.current) clearTimeout(relationNoteTimerRef.current);
+    relationNoteTimerRef.current = setTimeout(() => {
+      const memoId = memoRef.current?.id;
+      if (!memoId) return;
+      memoService.saveRelationNote(memoId, value)
+        .then(() => loggingService.logActivity('memo_edit' as any, {
+          field: 'relation_note', char_count: value.length,
+        }, memoId))
+        .catch((e) => console.warn('relation_note 保存失敗:', e));
+    }, 800);
   }, []);
 
   const handleRollback = useCallback(async (version: number) => {
@@ -1251,5 +1277,11 @@ export function useDashboard() {
     enabledModes: settings.enabled_modes,
     intervention: settings.intervention,
     flowPhases,
+
+    // ★★★ 機能2,3: エッジ説明レベル / 記述項目 ★★★
+    edgeExplanationLevel: settings.intervention.edge_explanation,
+    showRelationNote: settings.features?.relation_note ?? true,
+    relationNote,
+    handleRelationNoteChange,
   };
 }

@@ -27,6 +27,10 @@ interface Props {
   currentlyWriting: string | null;
   nextSuggestions: WritingSuggestion[];
   detectingTopics: boolean;
+  /** 機能3: 過去・未来の科目関連の記述 */
+  showRelationNote?: boolean;
+  relationNote?: string;
+  onRelationNoteChange?: (v: string) => void;
 }
 
 const LABELS: Record<AppMode, string> = {
@@ -43,6 +47,7 @@ export const ReflectionSheet: React.FC<Props> = (props) => {
     phase, mode, memoContent, onMemoChange, onGenerateMap,
     onAddNodeRequest, onRequestTopicDetection, loading, nodes,
     realNodeCount, describedLabels, nextSuggestions, detectingTopics,
+    showRelationNote = true, relationNote = '', onRelationNoteChange,
   } = props;
 
   const [nodeKw, setNodeKw] = useState('');
@@ -120,6 +125,28 @@ export const ReflectionSheet: React.FC<Props> = (props) => {
                 </Button>
               </div>
             </div>
+          </div>
+        )}
+
+        {/* ★ 機能3: 過去・未来の科目関連の記述（生成前から表示・管理者設定でON/OFF） */}
+        {showRelationNote && (
+          <div className="border-t border-surface-200 pt-3">
+            <p className="text-[11px] font-medium text-surface-500 mb-1.5">
+              過去・未来の科目とのつながり
+            </p>
+            <p className="text-[10px] text-surface-400 mb-1.5 leading-relaxed">
+              この学びが、これまで学んだ科目／これから学ぶ科目とどう関係するかを書いてみましょう。
+            </p>
+            <textarea
+              value={relationNote}
+              onChange={(e) => onRelationNoteChange?.(e.target.value)}
+              placeholder="例：これは1年で学んだ〇〇が前提で、3年の△△につながりそう…"
+              rows={5}
+              className={cn(
+                'w-full px-2.5 py-2 text-xs rounded-lg border border-surface-300 resize-y',
+                'focus:outline-none focus:ring-2 focus:ring-primary-200 focus:border-primary-400',
+              )}
+            />
           </div>
         )}
       </div>

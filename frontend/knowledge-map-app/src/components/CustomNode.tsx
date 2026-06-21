@@ -34,7 +34,7 @@ const BG: Record<string, string> = {
   relation_past_candidate: '#ebf8ff', relation_future_candidate: '#e6fffa',
 };
 
-const H = '!bg-primary-400 !border-white !border-2 !w-2 !h-2 !opacity-0';
+const H = '!bg-primary-500 !border-white !border-2 !w-3.5 !h-3.5 !opacity-0 group-hover:!opacity-100 !transition-opacity !cursor-crosshair !z-10';
 const HANDLE_DEFS: { pos: Position; id: string; style: React.CSSProperties }[] = [
   { pos: Position.Top,    id: 'top',          style: { left: '50%' } },
   { pos: Position.Right,  id: 'top-right',    style: { top: '20%' } },
@@ -71,27 +71,41 @@ const CustomNode: React.FC<NodeProps<MapNodeData>> = ({ data, selected, id, xPos
   const [popupPos, setPopupPos] = useState<{ x: number; y: number } | null>(null);
   const fp = getFloatParams(id, data);
 
-  // ===== ★ 左ボタン押下 → ポップアップ(toggle) =====
-  // 旧実装は onClick(= mousedown と mouseup が同一要素であることが条件)に
-  // 依存していたが、ノードが常時フロートアニメーションで微動するため、
-  // mouseup が別要素に流れて click が発火せず「クリックしても反応しない」
-  // 事象が多発していた。pointerdown は押下した瞬間に確実に発火するため解消する。
-  const handlePointerDown = useCallback((e: React.PointerEvent) => {
-    if (e.button !== 0) return;  // 左ボタンのみ(中央ボタンは onMouseDown 側で処理)
-    // 接続ドラッグ用ハンドル上の押下は無視し、手動接続操作を妨げない
-    if ((e.target as HTMLElement)?.classList?.contains('react-flow__handle')) return;
-    e.stopPropagation();
-    document.dispatchEvent(
-      new CustomEvent('node-clicked', { detail: { nodeId: id } })
-    );
-  }, [id]);
-
   // ⓘ ボタン: 必ず開く(force)— 詳細への明示的な入口
   const handleInfoOpen = useCallback((e: React.PointerEvent) => {
     e.stopPropagation();
     document.dispatchEvent(
       new CustomEvent('node-clicked', { detail: { nodeId: id, force: true } })
     );
+  }, [id]);
+
+  // ===== ★ クリック/ドラッグ判定 =====
+  //   React Flow の onNodeClick は「ほぼ無移動」でないと発火せず、ドラッグ有効時に
+  //   クリックが効かなくなる。そこで pointerdown→pointerup の移動量で自前判定する。
+  //   - 小移動(<6px) かつ 短時間 → クリック（パネル開閉）
+  //   - 大移動 → ドラッグ（React Flow が処理。ここでは何もしない）
+  //   stopPropagation しないので React Flow のドラッグは妨げない。
+  const pointerDownRef = useRef<{ x: number; y: number; t: number } | null>(null);
+  const isInteractive = (el: EventTarget | null) => {
+    const node = el as HTMLElement | null;
+    return !!node?.closest?.('button, a, input, textarea, .react-flow__handle');
+  };
+  const handleNodePointerDown = useCallback((e: React.PointerEvent) => {
+    if (e.button !== 0) return;
+    if (isInteractive(e.target)) { pointerDownRef.current = null; return; }
+    pointerDownRef.current = { x: e.clientX, y: e.clientY, t: Date.now() };
+  }, []);
+  const handleNodePointerUp = useCallback((e: React.PointerEvent) => {
+    if (e.button !== 0) return;
+    const d = pointerDownRef.current;
+    pointerDownRef.current = null;
+    if (!d || isInteractive(e.target)) return;
+    const dist = Math.hypot(e.clientX - d.x, e.clientY - d.y);
+    const dt = Date.now() - d.t;
+    if (dist <= 6 && dt <= 600) {
+      // クリックと判定 → パネルを開閉
+      document.dispatchEvent(new CustomEvent('node-clicked', { detail: { nodeId: id } }));
+    }
   }, [id]);
 
   // 周辺概念をこのノード単位でオンデマンド取得
@@ -191,13 +205,17 @@ const CustomNode: React.FC<NodeProps<MapNodeData>> = ({ data, selected, id, xPos
       ? (data.relationPreview as string[])
       : (relationMeta.getPreview(id) || []);
 
+  // ★ 管理者機能D: 関連科目 Lv2 は「科目名のみ」。部分木の展開は不可。
+  const relTextOnly = isCandidate && data.relationLevel === 2;
+
   return (
     <>
       <div
         ref={nodeRef}
-        onPointerDown={handlePointerDown}
+        onPointerDown={handleNodePointerDown}
+        onPointerUp={handleNodePointerUp}
         onMouseDown={handleMouseDown}
-        className={isSat || isRel ? 'node-float-slow node-appear' : 'node-float'}
+        className={'node-appear group'}
         style={{
           '--float-delay': `${fp.delay}s`,
           '--float-duration': `${fp.duration}s`,
@@ -328,37 +346,43 @@ const CustomNode: React.FC<NodeProps<MapNodeData>> = ({ data, selected, id, xPos
           )}
 
           {isCandidate && (
-            <>
-              <p style={{ fontSize: 11, color: '#718096', marginBottom: 8, lineHeight: 1.6 }}>
-                「詳細を表示」で、以下の概念がこのマップに接続されます。
+            relTextOnly ? (
+              <p style={{ fontSize: 11, color: '#495057', marginBottom: 10, lineHeight: 1.7 }}>
+                この知識は「<strong style={{ color: relTextColor }}>{data.label}</strong>」という科目に関連しています。
               </p>
-              {previewList.length > 0 ? (
-                <div style={{
-                  marginBottom: 10, padding: '8px 10px', borderRadius: 8,
-                  background: isPast ? '#ebf8ff' : '#e6fffa',
-                  border: `1px solid ${relLightColor}`,
-                }}>
-                  <p style={{ fontSize: 10, fontWeight: 700, color: relTextColor, marginBottom: 5 }}>
-                    接続される概念（{previewList.length}件）
-                  </p>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                    {previewList.map((p, i) => (
-                      <span key={i} style={{
-                        fontSize: 10, fontWeight: 500, color: relTextColor,
-                        background: '#fff', borderRadius: 6, padding: '2px 7px',
-                        border: `1px solid ${relLightColor}`,
-                      }}>
-                        {p}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              ) : (
-                <p style={{ fontSize: 10, color: '#a0aec0', marginBottom: 10 }}>
-                  接続される概念のプレビューはありません。
+            ) : (
+              <>
+                <p style={{ fontSize: 11, color: '#718096', marginBottom: 8, lineHeight: 1.6 }}>
+                  「詳細を表示」で、以下の概念がこのマップに接続されます。
                 </p>
-              )}
-            </>
+                {previewList.length > 0 ? (
+                  <div style={{
+                    marginBottom: 10, padding: '8px 10px', borderRadius: 8,
+                    background: isPast ? '#ebf8ff' : '#e6fffa',
+                    border: `1px solid ${relLightColor}`,
+                  }}>
+                    <p style={{ fontSize: 10, fontWeight: 700, color: relTextColor, marginBottom: 5 }}>
+                      接続される概念（{previewList.length}件）
+                    </p>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                      {previewList.map((p, i) => (
+                        <span key={i} style={{
+                          fontSize: 10, fontWeight: 500, color: relTextColor,
+                          background: '#fff', borderRadius: 6, padding: '2px 7px',
+                          border: `1px solid ${relLightColor}`,
+                        }}>
+                          {p}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <p style={{ fontSize: 10, color: '#a0aec0', marginBottom: 10 }}>
+                    接続される概念のプレビューはありません。
+                  </p>
+                )}
+              </>
+            )
           )}
 
           {data.sentence && !isCandidate && (
@@ -371,7 +395,7 @@ const CustomNode: React.FC<NodeProps<MapNodeData>> = ({ data, selected, id, xPos
           )}
 
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            {isCandidate && (
+            {isCandidate && !relTextOnly && (
               <button
                 onClick={handleExpandRelation}
                 style={{

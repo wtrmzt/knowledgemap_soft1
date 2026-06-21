@@ -34,6 +34,9 @@ export interface Memo {
   user_id: number;
   content: string;
   mode: AppMode;
+  title?: string | null;
+  /** 機能3: 過去・未来の科目関連の記述 */
+  relation_note?: string;
   created_at: string | null;
   updated_at: string | null;
 }
@@ -256,6 +259,8 @@ export interface InterventionLevels {
   satellite: InterventionLevel;
   /** 関連科目推薦 (1:非表示 / 2:科目名のみ / 3:部分木接続) */
   relation: InterventionLevel;
+  /** エッジ説明 (1:OFF / 2:単語のみ / 3:説明文) 機能2 */
+  edge_explanation: InterventionLevel;
 }
 
 export interface EnabledModes {
@@ -264,10 +269,17 @@ export interface EnabledModes {
   idea: boolean;
 }
 
+/** 表示系の機能トグル（機能3など） */
+export interface FeatureFlags {
+  /** 過去・未来の記述項目（左パネル下部）の表示 */
+  relation_note: boolean;
+}
+
 /** 公開設定（ダッシュボードのゲーティング用） */
 export interface PublicSettings {
   enabled_modes: EnabledModes;
   intervention: InterventionLevels;
+  features: FeatureFlags;
 }
 
 /** 管理者向けフル設定（プロンプト含む） */
@@ -275,6 +287,7 @@ export interface AppSettingsData extends PublicSettings {
   prompts: {
     map_generation: string;
     surrounding: string;
+    edge_explanation: string;
   };
 }
 

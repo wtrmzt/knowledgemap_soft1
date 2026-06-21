@@ -8,7 +8,7 @@
  *   → 認証ヘッダの付与を既存 apiClient に完全に委ねる(localStorage キー名に依存しない).
  *   バックエンド側に POST /api/memos/<id>/update を用意して使う.
  */
-import { apiGet, apiPost } from './apiClient';
+import { apiGet, apiPost, apiPut } from './apiClient';
 import type { Memo, KnowledgeMapData, ImproveResult, MapNode, AppMode } from '@/types';
 
 // ============================================================
@@ -126,4 +126,8 @@ export async function createBlankMemo(
   initialTitle = ''
 ): Promise<Memo> {
   return apiPost<Memo>('/memos/blank', { mode, title: initialTitle });
+}
+// ===== 機能3: 過去・未来の科目関連の記述を保存 =====
+export async function saveRelationNote(memoId: number, note: string): Promise<void> {
+  await apiPut<{ ok: boolean }>(`/memos/${memoId}/relation_note`, { relation_note: note });
 }
