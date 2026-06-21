@@ -28,7 +28,8 @@ import { FLOW_PHASE_ORDER } from '@/types';
 
 const DEFAULT_SETTINGS: PublicSettings = {
   enabled_modes: { reflection: true, research: true, idea: true },
-  intervention: { topic_detection: 3, satellite: 3, relation: 3 },
+  intervention: { topic_detection: 3, satellite: 3, relation: 3, edge_explanation: 3 },
+  features: { relation_note: true },
 };
 
 // =============================================
@@ -782,7 +783,7 @@ export function useDashboard() {
       const isTransient = (n: MapNode) => !!(n.data as any)?.transientCandidate;
       const savableNodes = nodesRef.current
         .filter((n) => !isTransient(n))
-        .map((n) => {
+        .map<MapNode>((n) => {
           const extra: Record<string, unknown> = {};
           // ★ 関連ノードは変換で落ちた relationDepth をストアから補完して保存
           if (n.data?.isRelation) {
@@ -797,7 +798,9 @@ export function useDashboard() {
               : n.data?.isRelation ? 'relation'
               : undefined);
           if (origin) extra.origin = origin;
-          return Object.keys(extra).length ? { ...n, data: { ...n.data, ...extra } } : n;
+          return Object.keys(extra).length
+            ? ({ ...n, data: { ...n.data, ...extra } } as MapNode)
+            : n;
         });
       const savableIds = new Set(savableNodes.map((n) => n.id));
       const savableEdges = edgesRef.current.filter(
@@ -1211,7 +1214,7 @@ export function useDashboard() {
       if (prev.some((e) => e.source === src && e.target === tgt)) return prev;
       const nw = [...prev, ne]; edgesRef.current = nw; return nw;
     });
-    loggingService.logActivity('node_connect', { source: src, target: tgt, label: label || '' }, memoRef.current?.id);
+    loggingService.logActivity('node_connect' as any, { source: src, target: tgt, label: label || '' }, memoRef.current?.id);
     scheduleAutoSave(); // ★ 機能1: 手動エッジを保存
   }, [scheduleAutoSave]);
 
