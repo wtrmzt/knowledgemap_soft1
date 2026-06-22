@@ -164,6 +164,54 @@ class UserActivityLog(db.Model):
         }
 
 
+class EventLog(db.Model):
+    """新イベントログ（v3 / analytics.ts 由来のバッチイベント受信先）。
+
+    routes/events.py の POST /api/events から書き込まれる。
+    旧 UserActivityLog とは並走する別系統（HANDOFF_SPEC.md 6章参照）。
+
+    注意: user_id はここでは User.id への外部キーではなく、
+    JWTペイロード由来の文字列ID（g.current_user["user_id"]）を直接格納する。
+    他テーブル（Memo等）の user_id（User.id への整数FK）とは意味が異なる点に注意。
+
+    client_event_id はユニーク制約必須。routes/events.py の _bulk_insert が
+    ON CONFLICT DO NOTHING (index_elements=["client_event_id"]) で
+    冪等な再送（sendBeacon の重複送信等）に対応する前提のため。
+    """
+    __tablename__ = "event_logs"
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.String(100), nullable=False, index=True)
+    session_id = db.Column(db.String(100), nullable=True, index=True)
+    client_event_id = db.Column(db.String(100), nullable=False, unique=True, index=True)
+    event_type = db.Column(db.String(100), nullable=False, index=True)
+    memo_id = db.Column(db.Integer, nullable=True, index=True)
+    payload = db.Column(db.JSON, default=dict)
+    client_ts = db.Column(db.DateTime, nullable=False)
+    server_ts = db.Column(db.DateTime, nullable=False,
+                           default=lambda: datetime.now(timezone.utc), index=True)
+    user_agent = db.Column(db.String(500), nullable=True)
+
+    __table_args__ = (
+        Index("ix_event_logs_session_client_ts", "session_id", "client_ts"),
+        Index("ix_event_logs_user_type_server_ts", "user_id", "event_type", "server_ts"),
+    )
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "user_id": self.user_id,
+            "session_id": self.session_id,
+            "client_event_id": self.client_event_id,
+            "event_type": self.event_type,
+            "memo_id": self.memo_id,
+            "payload": self.payload,
+            "client_ts": self.client_ts.isoformat() if self.client_ts else None,
+            "server_ts": self.server_ts.isoformat() if self.server_ts else None,
+            "user_agent": self.user_agent,
+        }
+
+
 class AppSettings(db.Model):
     """
     アプリ全体の設定（管理者が編集する単一行テーブル / 研究の介入条件など）。
