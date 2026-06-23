@@ -92,10 +92,32 @@ export const KnowledgeMapDisplay: React.FC<Props> = ({
     source: string; target: string; sourceLabel: string; targetLabel: string;
   } | null>(null);
 
-  // ===== 外部ノード更新 =====
+  // 最新値を ref で保持（位置保持の再構築に使用）
+  const nodeStatusesRef = useRef(nodeStatuses);
+  useEffect(() => { nodeStatusesRef.current = nodeStatuses; }, [nodeStatuses]);
+  const surroundingRef = useRef(surroundingConcepts);
+  useEffect(() => { surroundingRef.current = surroundingConcepts; }, [surroundingConcepts]);
+  const mapNodesRef = useRef(mapNodes);
+  useEffect(() => { mapNodesRef.current = mapNodes; }, [mapNodes]);
+  // ドラッグ中フラグ（true の間はノードの作り直しを止めて位置を死守）
+  const isDraggingRef = useRef(false);
+
+  // ===== 外部ノード更新（構造・位置）: 生成/追加/ロールバック/ドラッグ確定時 =====
   useEffect(() => {
-    setFlowNodes(toFlowNodes(mapNodes, nodeStatuses, surroundingConcepts));
-  }, [mapNodes, nodeStatuses, surroundingConcepts, setFlowNodes]);
+    if (isDraggingRef.current) return; // ドラッグ中は再構築しない
+    setFlowNodes(toFlowNodes(mapNodes, nodeStatusesRef.current, surroundingRef.current));
+  }, [mapNodes, setFlowNodes]);
+
+  // ===== ステータス/周辺概念のみ更新: 位置は保持しデータだけ差し替え =====
+  useEffect(() => {
+    if (isDraggingRef.current) return; // ドラッグ中は触らない（位置巻き戻し防止）
+    setFlowNodes((prev) => {
+      const built = toFlowNodes(mapNodesRef.current, nodeStatuses, surroundingConcepts);
+      const dataById: Record<string, any> = {};
+      built.forEach((n) => { dataById[n.id] = n.data; });
+      return prev.map((n) => (dataById[n.id] ? { ...n, data: dataById[n.id] } : n));
+    });
+  }, [nodeStatuses, surroundingConcepts, setFlowNodes]);
 
   // ===== 外部エッジ更新（ハンドル計算込み） =====
   useEffect(() => {
@@ -131,11 +153,10 @@ export const KnowledgeMapDisplay: React.FC<Props> = ({
     const arr = Array.isArray(c) ? c : [];
     const dragging = arr.some((ch: any) => ch.type === 'position' && ch.dragging === true);
     const dragEnded = arr.some((ch: any) => ch.type === 'position' && ch.dragging === false);
-    // ドラッグ中は親state(mapNodes)へ同期しない（同期すると flowNodes が再構築され描画が乱れる）
-    if (dragging) return;
+    if (dragging) { isDraggingRef.current = true; return; } // ドラッグ中は親へ同期しない
     // 親stateへの同期は次tickで（描画中の setState を避ける＝警告防止）
     setTimeout(() => { setMapNodes(fromFlowNodes(flowNodesRef.current)); }, 0);
-    if (dragEnded) schedule(); // ★ ドラッグ移動が確定したら保存
+    if (dragEnded) { isDraggingRef.current = false; schedule(); } // 確定で保存・再構築解禁
   }, [onNChange, setMapNodes, schedule]);
 
   // ===== ★ 中央クリック ドラッグ処理 =====
