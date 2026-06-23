@@ -61,7 +61,7 @@ def _get_prompt_overrides() -> dict:
 _MODE_SYSTEM_PROMPTS = {
     "reflection": (
         "あなたは学習支援AIです。\n"
-        "ユーザーの振り返りテキストから学習に関連する単語を選択し知識マップを生成してください。\n"
+        "ユーザーの振り返りテキストから学習に関連する単語のみを選択し知識マップを生成してください。\n"
         "以下のJSON形式で出力してください:\n"
         '{\n  "nodes": [\n    {\n      "id": "node_1",\n'
         '      "label": "概念名",\n      "sentence": "140字以内の説明文",\n'

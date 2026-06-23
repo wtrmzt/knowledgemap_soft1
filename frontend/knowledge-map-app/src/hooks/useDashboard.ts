@@ -287,7 +287,7 @@ export function useDashboard() {
   const [edges, setEdges] = useState<MapEdge[]>([]);
   const [loading, setLoading] = useState(false);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
-  const [selectedYear, setSelectedYear] = useState<number>(3);
+  const [selectedYear, setSelectedYear] = useState<number>(1);
 
   // ★★★ v3.2.1 追加: タイトル ★★★
   const [memoTitle, setMemoTitle] = useState<string>('');
