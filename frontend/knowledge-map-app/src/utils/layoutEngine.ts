@@ -14,7 +14,7 @@ const BASE_RADIUS = 350;
 const MIN_ARC_PX = 300;
 
 // 力学パラメータ
-const SPRING_LENGTH = 320;    // バネの自然長（接続ノード間の理想距離）
+const SPRING_LENGTH = 220;    // バネの自然長（接続ノード間の理想距離）
 const SPRING_K = 0.025;       // バネ定数（弱めて広がりやすく）
 const REPULSION_K = 45000;    // 斥力定数（強くして離す）
 const MIN_DIST = 280;         // ノード間の最小距離
