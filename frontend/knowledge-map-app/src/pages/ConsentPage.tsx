@@ -11,7 +11,7 @@ import { updateConsent, getMe, isAuthenticated } from '@/services/authService';
 const ConsentPage: React.FC = () => {
   const [agreed, setAgreed] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [alreadyConsented, setAlreadyConsented] = useState(false);
+  const [alreadyConsented] = useState(false);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -21,23 +21,24 @@ const ConsentPage: React.FC = () => {
     }
     getMe().then((user) => {
       if (user.consented) {
-        setAlreadyConsented(true);
+        // 同意済みユーザーは同意画面をスキップしてマップ一覧へ
+        navigate('/maps', { replace: true });
       }
     }).catch(() => {});
   }, [navigate]);
 
   const handleProceed = async () => {
     if (alreadyConsented) {
-      navigate('/dashboard');
+      navigate('/maps');
       return;
     }
     setLoading(true);
     try {
       await updateConsent(true);
-      navigate('/dashboard');
+      navigate('/maps');
     } catch {
-      // エラー時もダッシュボードへ（同意はベストエフォート）
-      navigate('/dashboard');
+      // エラー時もマップ一覧へ（同意はベストエフォート）
+      navigate('/maps');
     } finally {
       setLoading(false);
     }

@@ -944,6 +944,10 @@ export function useDashboard() {
       setPhase('revise');
       setFlowPhase('edit'); // ★ 項目3: 初期マップ作成 → マップ編集へ
       lastSavedContentRef.current = content; // 生成直後の本文を基準に
+
+      // ★ 記述提案支援を初期マップ作成直後から自動起動（手動切替を不要にする）
+      //   介入度 Lv1 の場合は runTopicDetection 内で自動的に何もしない。
+      runTopicDetection(content);
       loggingService.logActivity('map_generate', {
         node_count: layout.length,
         edge_count: rawEdges.length,
@@ -1005,7 +1009,7 @@ export function useDashboard() {
     } finally {
       setLoading(false);
     }
-  }, [mode]);
+  }, [mode, runTopicDetection]);
 
   // =============================================
   // ★★★ v3.2.1 追加: 新規空メモ作成(二重実行防止) ★★★

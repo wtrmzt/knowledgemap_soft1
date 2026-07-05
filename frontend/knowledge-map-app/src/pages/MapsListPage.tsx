@@ -11,7 +11,7 @@
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, LogOut } from 'lucide-react';
+import { ArrowLeft, LogOut, Plus, X, Sparkles } from 'lucide-react';
 
 import MapCard from '@/components/MapCard';
 import MapsToolbar from '@/components/MapsToolbar';
@@ -37,6 +37,13 @@ const MapsListPage: React.FC = () => {
 
   const [query, setQuery] = useState('');
   const [mode, setMode] = useState<AppMode | 'all'>('all');
+
+  // 新規作成ポップアップ
+  const [showNew, setShowNew] = useState(false);
+  const [newMode, setNewMode] = useState<AppMode>('reflection');
+  const startNewMap = useCallback(() => {
+    navigate(`/dashboard?new=1&mode=${newMode}`);
+  }, [navigate, newMode]);
 
   // 認証チェック
   useEffect(() => {
@@ -108,6 +115,10 @@ const MapsListPage: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-2">
+            <Button variant="default" size="sm" onClick={() => setShowNew(true)}>
+              <Plus size={14} />
+              新しいマップ
+            </Button>
             <span className="text-[11px] text-surface-400">{getCurrentUserId()}</span>
             <Button variant="ghost" size="sm" onClick={handleLogout}>
               <LogOut size={14} />
@@ -139,6 +150,14 @@ const MapsListPage: React.FC = () => {
                 ? '条件に一致するマップが見つかりません。'
                 : '「新しいマップ」から最初の振り返りを始めましょう。'}
             </p>
+            {!(query || mode !== 'all') && (
+              <div className="mt-4 flex justify-center">
+                <Button variant="default" onClick={() => setShowNew(true)}>
+                  <Plus size={15} />
+                  新しいマップを作成
+                </Button>
+              </div>
+            )}
           </div>
         )}
 
@@ -162,6 +181,69 @@ const MapsListPage: React.FC = () => {
           </div>
         )}
       </main>
+
+      {/* 新規作成ポップアップ */}
+      {showNew && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          onClick={() => setShowNew(false)}
+        >
+          <div
+            className="w-full max-w-md rounded-2xl bg-white shadow-lg animate-fade-in"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-surface-200 px-5 py-3.5">
+              <h2 className="flex items-center gap-2 text-sm font-bold text-surface-700">
+                <Sparkles size={15} className="text-primary-500" />
+                新しいマップを作成
+              </h2>
+              <button
+                onClick={() => setShowNew(false)}
+                className="text-surface-400 hover:text-surface-600"
+                aria-label="閉じる"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="px-5 py-4 space-y-3">
+              <p className="text-xs text-surface-500">
+                作成するマップの種類を選んでください。
+              </p>
+              <div className="grid grid-cols-3 gap-2">
+                {([
+                  ['reflection', '学習の振り返り'],
+                  ['research', '調べ物メモ'],
+                  ['idea', 'アイデアメモ'],
+                ] as [AppMode, string][]).map(([m, label]) => (
+                  <button
+                    key={m}
+                    onClick={() => setNewMode(m)}
+                    className={
+                      'rounded-xl border px-3 py-3 text-xs font-medium transition ' +
+                      (newMode === m
+                        ? 'border-primary-400 bg-primary-50 text-primary-700 ring-2 ring-primary-200'
+                        : 'border-surface-200 bg-white text-surface-600 hover:border-surface-300')
+                    }
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 border-t border-surface-200 px-5 py-3.5">
+              <Button variant="ghost" size="sm" onClick={() => setShowNew(false)}>
+                キャンセル
+              </Button>
+              <Button variant="default" size="sm" onClick={startNewMap}>
+                <Plus size={14} />
+                作成してはじめる
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

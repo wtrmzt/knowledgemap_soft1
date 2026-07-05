@@ -79,6 +79,17 @@ const DashboardPage: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isNewParam]);
 
+  // ?mode=<reflection|research|idea>（新規作成ポップアップからのモード指定）を反映
+  const modeParam = searchParams.get('mode');
+  const handledModeRef = useRef(false);
+  useEffect(() => {
+    if (!modeParam || handledModeRef.current) return;
+    if (!['reflection', 'research', 'idea'].includes(modeParam)) return;
+    handledModeRef.current = true;
+    d.handleModeChange?.(modeParam as any);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modeParam]);
+
   const handleTitleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     d.setMemoTitle?.(e.target.value);
   };
