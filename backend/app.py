@@ -9,6 +9,8 @@ Flask アプリケーション エントリポイント
 - レート制限超過時の 429 グローバルハンドラを追加
 - /static/thumbnails/<filename> で SVG サムネイルを配信
 """
+from models import db
+import memo_history            # ← 追加（モデル登録＋自動記録を有効化）
 import logging
 import os
 import sqlite3
