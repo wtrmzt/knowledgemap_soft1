@@ -9,7 +9,7 @@
  *   - カード → /dashboard?memo_id=<id> へ遷移
  *   - DashboardPage 側で ?memo_id= を読み取り、既存マップを開く
  */
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, LogOut, Plus, X, Sparkles } from 'lucide-react';
 
@@ -41,6 +41,7 @@ const MapsListPage: React.FC = () => {
   // 新規作成ポップアップ
   const [showNew, setShowNew] = useState(false);
   const [newMode, setNewMode] = useState<AppMode>('reflection');
+  const promptedRef = useRef(false); // 初回誘導ポップアップを一度だけ出すためのフラグ
   const startNewMap = useCallback(() => {
     navigate(`/dashboard?new=1&mode=${newMode}`);
   }, [navigate, newMode]);
@@ -70,6 +71,18 @@ const MapsListPage: React.FC = () => {
         setHasNext(res.has_next);
         setTotal(res.total);
         setPage(targetPage);
+
+        // ★ 初回ロード完了時: 新規作成ポップアップで誘導
+        //   - マップが1件も無ければ必ず表示（作成へ導く）
+        //   - マップがある場合はセッション初回の1回だけ（再編集ユーザーにしつこくしない）
+        if (targetPage === 1 && replace && !promptedRef.current) {
+          promptedRef.current = true;
+          const seen = sessionStorage.getItem('kmap_new_prompt_shown');
+          if (res.items.length === 0 || !seen) {
+            setShowNew(true);
+            sessionStorage.setItem('kmap_new_prompt_shown', '1');
+          }
+        }
       } catch (e: any) {
         const msg = e?.message || '読み込みに失敗しました';
         setError(msg);
@@ -142,6 +155,25 @@ const MapsListPage: React.FC = () => {
             {error}
           </div>
         )}
+
+        {/* ★ 新規作成への誘導バナー（常設・非ブロッキング） */}
+        <div className="mb-5 flex flex-col gap-3 rounded-2xl border border-primary-200 bg-gradient-to-r from-primary-50 to-white px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-3">
+            <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary-500/10 text-primary-600">
+              <Sparkles size={18} />
+            </span>
+            <div>
+              <p className="text-sm font-bold text-surface-700">新しい振り返りを始めましょう</p>
+              <p className="text-[11px] text-surface-400">
+                今日の学びから新しいマップを作成できます。過去のマップは下の一覧から編集を再開できます。
+              </p>
+            </div>
+          </div>
+          <Button variant="default" onClick={() => setShowNew(true)} className="shrink-0">
+            <Plus size={15} />
+            新しいマップを作成
+          </Button>
+        </div>
 
         {isEmpty && (
           <div className="rounded-2xl border border-dashed border-surface-300 bg-white p-12 text-center">
