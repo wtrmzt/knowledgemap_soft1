@@ -40,11 +40,11 @@ const MapsListPage: React.FC = () => {
 
   // 新規作成ポップアップ
   const [showNew, setShowNew] = useState(false);
-  const [newMode, setNewMode] = useState<AppMode>('reflection');
   const promptedRef = useRef(false); // 初回誘導ポップアップを一度だけ出すためのフラグ
   const startNewMap = useCallback(() => {
-    navigate(`/dashboard?new=1&mode=${newMode}`);
-  }, [navigate, newMode]);
+    // 現状は「学習の振り返り」モードのみ
+    navigate('/dashboard?new=1&mode=reflection');
+  }, [navigate]);
 
   // 認証チェック
   useEffect(() => {
@@ -239,29 +239,12 @@ const MapsListPage: React.FC = () => {
             </div>
 
             <div className="px-5 py-4 space-y-3">
-              <p className="text-xs text-surface-500">
-                作成するマップの種類を選んでください。
+              <p className="text-sm text-surface-600">
+                学習の振り返りマップを新しく作成します。
               </p>
-              <div className="grid grid-cols-3 gap-2">
-                {([
-                  ['reflection', '学習の振り返り'],
-                  ['research', '調べ物メモ'],
-                  ['idea', 'アイデアメモ'],
-                ] as [AppMode, string][]).map(([m, label]) => (
-                  <button
-                    key={m}
-                    onClick={() => setNewMode(m)}
-                    className={
-                      'rounded-xl border px-3 py-3 text-xs font-medium transition ' +
-                      (newMode === m
-                        ? 'border-primary-400 bg-primary-50 text-primary-700 ring-2 ring-primary-200'
-                        : 'border-surface-200 bg-white text-surface-600 hover:border-surface-300')
-                    }
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
+              <p className="text-xs text-surface-400 leading-relaxed">
+                今日学んだことを入力すると、知識マップが生成され、振り返りの記述を支援します。
+              </p>
             </div>
 
             <div className="flex justify-end gap-2 border-t border-surface-200 px-5 py-3.5">
