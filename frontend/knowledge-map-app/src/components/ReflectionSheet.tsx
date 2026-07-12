@@ -66,10 +66,10 @@ export const ReflectionSheet: React.FC<Props> = (props) => {
     }
   }, [phase, onMemoChange, onRequestTopicDetection]);
 
-  // 提案クリック → テキスト末尾に挿入
+  // 提案クリック → テキスト末尾に挿入（prompt_hint のみ。connector はカード上の表示のみ）
   const handleSuggClick = useCallback((s: WritingSuggestion) => {
     onSuggestionAdopted?.(s); // ★ 採用（suggestion_type付き）を記録
-    const ins = `\n${s.connector}${s.prompt_hint}`;
+    const ins = `\n${s.prompt_hint}`;
     const nxt = memoContent + ins;
     onMemoChange(nxt);
     // 挿入後もトピック検知をトリガー

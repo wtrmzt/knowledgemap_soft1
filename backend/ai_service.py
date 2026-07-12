@@ -223,11 +223,12 @@ def detect_described_topics(text: str, node_labels: list) -> dict:
         "   【次なる提案の共通条件】\n"
         "   ・文脈の考慮: 上記のアプローチに合わせ、最も適切な論理接続詞（connector）を選択してください。\n"
         "   ・不完全な書き出し支援文: `prompt_hint`（書き出し支援文）は完全な文章を与えないでください。"
-        "ユーザーが自ら続きを考えて書き込める不完全な文にしてください。\n"
+        "ユーザーが自ら続きを考えて書き込める端的で不完全な文にしてください。\n"
         "   ・ヒントの形式: 「…」で終わらない形にしてください。例: 「なぜかというと、」「具体的には、」「一方で、」など。\n\n"
         "   各提案の構成: \n"
         '   suggestion_type("redirection", "expansion", "deepening" のいずれか), '
         "node_label(概念), connector(接続の内容), prompt_hint(書き出し支援文)\n"
+
         "出力JSONフォーマット例:\n"
         "{\n"
         '  "described": ["概念A"],\n'
@@ -236,7 +237,7 @@ def detect_described_topics(text: str, node_labels: list) -> dict:
         "    {\n"
         '      "suggestion_type": "deepening",\n'
         '      "node_label": "概念C",\n'
-        '      "connector": "具体的にしませんか",\n'
+        '      "connector": "具体化",\n'
         '      "prompt_hint": "その動作原理として具体的に考えられるのは、"\n'
         "    }\n"
         "  ]\n"
