@@ -99,7 +99,7 @@ def generate_map_from_text(text: str, mode: str = "reflection") -> dict:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": text},
             ],
-            temperature=0.7,
+            temperature=0.0,
             response_format={"type": "json_object"},
         )
         result = json.loads(response.choices[0].message.content)
@@ -139,7 +139,7 @@ def generate_node_from_keyword(keyword: str) -> dict:
                 },
                 {"role": "user", "content": keyword},
             ],
-            temperature=0.7,
+            temperature=0.0,
             response_format={"type": "json_object"},
         )
         result = json.loads(response.choices[0].message.content)
@@ -177,7 +177,7 @@ def generate_surrounding_concepts(nodes: list) -> dict:
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
-            temperature=0.7,
+            temperature=0.0,
             response_format={"type": "json_object"},
         )
         result = json.loads(response.choices[0].message.content)
@@ -209,7 +209,7 @@ def detect_described_topics(text: str, node_labels: list) -> dict:
         '2. "currently_writing": 文末付近で記述が途切れている、まさに今書いている最中の概念（1つ、なければnull）。\n'
         "   【重要・判定ルール】文末が「〜が」「〜について」などの助詞で未完成のまま終わっており、"
         "そこに概念が含まれる場合、それは `described` から除外し、必ず `currently_writing` に設定してください。\n"
-        '3. "next_suggestions": 学習者の思考を促すための書き出し提案（最大2つ）。\n\n'
+        '3. "next_suggestions": 学習者の思考を促すための書き出し提案（最大3つ）。\n\n'
         "   【提案の方向性と優先順位】\n"
         "   現在の状況を分析し、以下の優先順位とアプローチに従って提案を作成してください。\n"
         "   ・優先度1（軌道修正: redirection）: 振り返り文の内容がマップの概念と全く無関係（雑談など）な場合。"
@@ -222,12 +222,12 @@ def detect_described_topics(text: str, node_labels: list) -> dict:
         "`described` の概念に対してメタ認知を促すヒントを作成します。\n\n"
         "   【次なる提案の共通条件】\n"
         "   ・文脈の考慮: 上記のアプローチに合わせ、最も適切な論理接続詞（connector）を選択してください。\n"
-        "   ・不完全な書き出しヒント: `prompt_hint`（書き出しヒント）は完全な文章を与えないでください。"
+        "   ・不完全な書き出し支援文: `prompt_hint`（書き出し支援文）は完全な文章を与えないでください。"
         "ユーザーが自ら続きを考えて書き込める不完全な文にしてください。\n"
         "   ・ヒントの形式: 「…」で終わらない形にしてください。例: 「なぜかというと、」「具体的には、」「一方で、」など。\n\n"
         "   各提案の構成: \n"
         '   suggestion_type("redirection", "expansion", "deepening" のいずれか), '
-        "node_label(概念), connector(論理接続詞), prompt_hint(書き出しヒント)\n"
+        "node_label(概念), connector(接続の内容), prompt_hint(書き出し支援文)\n"
         "出力JSONフォーマット例:\n"
         "{\n"
         '  "described": ["概念A"],\n'
@@ -236,7 +236,7 @@ def detect_described_topics(text: str, node_labels: list) -> dict:
         "    {\n"
         '      "suggestion_type": "deepening",\n'
         '      "node_label": "概念C",\n'
-        '      "connector": "そこで、",\n'
+        '      "connector": "具体的にしませんか",\n'
         '      "prompt_hint": "その動作原理として具体的に考えられるのは、"\n'
         "    }\n"
         "  ]\n"
@@ -247,7 +247,7 @@ def detect_described_topics(text: str, node_labels: list) -> dict:
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
-            temperature=0.3,
+            temperature=0.0,
             response_format={"type": "json_object"},
         )
         result = json.loads(response.choices[0].message.content)
