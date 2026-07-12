@@ -142,7 +142,12 @@ export type SurroundingConceptsMap = Record<string, SatelliteConcept[]>;
 // 振り返り記述支援
 // =============================================
 
+/** 提案の方向性（記述支援AI 新プロンプト） */
+export type SuggestionType = 'redirection' | 'expansion' | 'deepening';
+
 export interface WritingSuggestion {
+  /** 提案の種類: 軌道修正 / 展開 / 深掘り */
+  suggestion_type?: SuggestionType;
   node_label: string;
   connector: string;
   prompt_hint: string;

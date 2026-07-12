@@ -15,6 +15,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   isAuthenticated, isAdmin, logout, getCurrentUserId,
   memoService, mapService, loggingService, settingsService,
+  suggestionLogService,
 } from '@/services';
 import { computeRadialLayout, generateId } from '@/utils';
 import { relationMeta } from '@/utils/relationMeta';
@@ -411,6 +412,19 @@ export function useDashboard() {
       setCurrWriting(r.currently_writing || null);
       // Lv2: 状態の可視化のみ → 提案カードは出さない。Lv3: フル。
       setNextSugg(level >= 3 ? (r.next_suggestions || []) : []);
+
+      // ★ 提示された提案（suggestion_type 付き）をDBに記録（研究データ）
+      if ((r.next_suggestions || []).length > 0) {
+        suggestionLogService.recordSuggested(
+          r.next_suggestions || [],
+          memoRef.current?.id,
+          {
+            currently_writing: r.currently_writing || null,
+            described_count: (r.described || []).length,
+            total_nodes: labels.length,
+          },
+        );
+      }
     } catch (e) { console.error('トピック検知エラー:', e); } finally { setDetecting(false); }
   }, [getLatestRealLabels]);
 
@@ -944,10 +958,6 @@ export function useDashboard() {
       setPhase('revise');
       setFlowPhase('edit'); // ★ 項目3: 初期マップ作成 → マップ編集へ
       lastSavedContentRef.current = content; // 生成直後の本文を基準に
-
-      // ★ 記述提案支援を初期マップ作成直後から自動起動（手動切替を不要にする）
-      //   介入度 Lv1 の場合は runTopicDetection 内で自動的に何もしない。
-      runTopicDetection(content);
       loggingService.logActivity('map_generate', {
         node_count: layout.length,
         edge_count: rawEdges.length,
@@ -1009,7 +1019,7 @@ export function useDashboard() {
     } finally {
       setLoading(false);
     }
-  }, [mode, runTopicDetection]);
+  }, [mode]);
 
   // =============================================
   // ★★★ v3.2.1 追加: 新規空メモ作成(二重実行防止) ★★★
@@ -1252,6 +1262,15 @@ export function useDashboard() {
 
   const realNodeCount = nodes.filter((n) => !n.data?.isSatellite && !n.data?.isRelation).length;
 
+  // ★ 提案カードが採用（クリックで挿入）されたときにDB記録（研究データ）
+  const handleSuggestionAdopted = useCallback((s: WritingSuggestion) => {
+    suggestionLogService.recordAdopted(s, memoRef.current?.id, {
+      currently_writing: currentlyWriting,
+      described_count: describedLabels.length,
+      total_nodes: getLatestRealLabels().length,
+    });
+  }, [currentlyWriting, describedLabels, getLatestRealLabels]);
+
   return {
     mode, phase, memoContent, setMemoContent, currentMemo,
     nodes, setNodes, edges, setEdges, loading, saveStatus,
@@ -1264,6 +1283,7 @@ export function useDashboard() {
     isAdminUser: isAdmin(), userId: getCurrentUserId(),
     realNodeCount,
     handleModeChange, handleGenerateMap, handleTopicDetection,
+    handleSuggestionAdopted,
     handleAddNode, handleSatelliteAdd, handleConnect,
     handleAutoSave, handleRollback, handleLogout,
     handleExpandRelation, handleFetchSurrounding, navigate,

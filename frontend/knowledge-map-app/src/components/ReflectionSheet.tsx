@@ -20,6 +20,8 @@ interface Props {
   onAddNodeRequest: (kw: string) => void;
   /** テキスト変更時に呼ぶ（デバウンスは useDashboard 側で管理） */
   onRequestTopicDetection: (text: string) => void;
+  /** 提案カードが採用されたとき（研究データ記録用） */
+  onSuggestionAdopted?: (s: WritingSuggestion) => void;
   loading: boolean;
   nodes: MapNode[];
   realNodeCount: number;
@@ -45,7 +47,7 @@ const PH: Record<AppMode, string> = {
 export const ReflectionSheet: React.FC<Props> = (props) => {
   const {
     phase, mode, memoContent, onMemoChange, onGenerateMap,
-    onAddNodeRequest, onRequestTopicDetection, loading, nodes,
+    onAddNodeRequest, onRequestTopicDetection, onSuggestionAdopted, loading, nodes,
     realNodeCount, describedLabels, nextSuggestions, detectingTopics,
     showRelationNote = true, relationNote = '', onRelationNoteChange,
   } = props;
@@ -66,6 +68,7 @@ export const ReflectionSheet: React.FC<Props> = (props) => {
 
   // 提案クリック → テキスト末尾に挿入
   const handleSuggClick = useCallback((s: WritingSuggestion) => {
+    onSuggestionAdopted?.(s); // ★ 採用（suggestion_type付き）を記録
     const ins = `\n${s.connector}${s.prompt_hint}`;
     const nxt = memoContent + ins;
     onMemoChange(nxt);

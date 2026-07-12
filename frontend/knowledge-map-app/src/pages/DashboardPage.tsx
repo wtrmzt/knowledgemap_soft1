@@ -292,6 +292,7 @@ const DashboardPage: React.FC = () => {
             onGenerateMap={d.handleGenerateMap}
             onAddNodeRequest={d.handleAddNode}
             onRequestTopicDetection={d.handleTopicDetection}
+            onSuggestionAdopted={d.handleSuggestionAdopted}
             loading={d.loading} nodes={d.nodes}
             realNodeCount={d.realNodeCount}
             describedLabels={d.describedLabels}

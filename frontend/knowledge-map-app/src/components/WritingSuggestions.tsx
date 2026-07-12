@@ -5,7 +5,14 @@
 import React from 'react';
 import { ArrowRight, CheckCircle2 } from 'lucide-react';
 import { cn } from '@/utils';
-import type { WritingSuggestion } from '@/types';
+import type { WritingSuggestion, SuggestionType } from '@/types';
+
+/** 提案の種類ごとのバッジ表示 */
+const TYPE_META: Record<SuggestionType, { label: string; cls: string }> = {
+  redirection: { label: '軌道修正', cls: 'bg-amber-50 border-amber-200 text-amber-700' },
+  expansion: { label: '展開', cls: 'bg-sky-50 border-sky-200 text-sky-700' },
+  deepening: { label: '深掘り', cls: 'bg-violet-50 border-violet-200 text-violet-700' },
+};
 
 interface WritingSuggestionsProps {
   suggestions: WritingSuggestion[];
@@ -39,6 +46,16 @@ export const WritingSuggestions: React.FC<WritingSuggestionsProps> = ({
               <span className="text-xs font-semibold text-primary-600 ml-1">
                 「{s.node_label}」
               </span>
+              {s.suggestion_type && TYPE_META[s.suggestion_type] && (
+                <span
+                  className={cn(
+                    'ml-1.5 inline-block px-1.5 py-0.5 rounded border text-[9px] font-semibold align-middle',
+                    TYPE_META[s.suggestion_type].cls,
+                  )}
+                >
+                  {TYPE_META[s.suggestion_type].label}
+                </span>
+              )}
               <p className="text-[11px] text-primary-500 mt-0.5 leading-relaxed">
                 {s.prompt_hint}
               </p>
