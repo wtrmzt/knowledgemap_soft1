@@ -23,9 +23,12 @@ from sqlalchemy.engine import Engine
 from config import Config
 from models import db
 from routes import register_all_routes
+import writing_suggestion_log                              # create_all の前（モデル登録）
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
 
 
 # ===========================================================
@@ -72,6 +75,9 @@ def create_app():
 
     # ルート登録(既存)
     register_all_routes(app)
+
+    writing_suggestion_log.register_suggestion_log_routes(app) # register_all_routes(app) の後
+
 
     # ===========================================================
     # ▼▼▼ v3 で追加(すべて任意。未設定/失敗でも既存動作は維持)▼▼▼
