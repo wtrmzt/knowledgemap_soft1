@@ -17,6 +17,7 @@ import {
   KnowledgeMapDisplay, MapHistoryPanel,
 } from '@/components';
 import { Button } from '@/components/ui';
+import { OutlookButton } from '@/components/OutlookButton';  // ★ 見通す機能 追加
 import { useDashboard } from '@/hooks/useDashboard';
 import { HelpTutorial, shouldAutoOpenTutorial } from '@/components/HelpTutorial';
 import { HelpOverlay } from '@/components/HelpOverlay';
@@ -170,6 +171,8 @@ const DashboardPage: React.FC = () => {
           </div>
 
           <ModeSwitcher mode={d.mode} onChange={d.handleModeChange} enabledModes={d.enabledModes} />
+
+          <OutlookButton />  {/* ★ 見通す機能 追加 */}
 
           <div className="flex items-center gap-1.5 ml-2">
             <GraduationCap size={14} className="text-surface-400" />

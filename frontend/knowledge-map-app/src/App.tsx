@@ -16,6 +16,7 @@ import DashboardPage from '@/pages/DashboardPage';
 import AdminPage from '@/pages/AdminPage';
 import MapsListPage from '@/pages/MapsListPage';              // ★ v3 追加
 import AuthCallbackPage from '@/pages/AuthCallbackPage';      // ★ v3.1 追加
+import OutlookPage from '@/pages/OutlookPage';                // ★ 見通す機能 追加
 
 const App: React.FC = () => {
   return (
@@ -26,6 +27,7 @@ const App: React.FC = () => {
         <Route path="/consent" element={<ConsentPage />} />
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/maps" element={<MapsListPage />} />        {/* ★ v3 追加 */}
+        <Route path="/outlook" element={<OutlookPage />} />      {/* ★ 見通す機能 追加 */}
         <Route path="/admin" element={<AdminPage />} />
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>

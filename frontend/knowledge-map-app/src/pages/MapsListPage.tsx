@@ -16,6 +16,7 @@ import { ArrowLeft, LogOut, Plus, X, Sparkles } from 'lucide-react';
 import MapCard from '@/components/MapCard';
 import MapsToolbar from '@/components/MapsToolbar';
 import { Button } from '@/components/ui';
+import { OutlookButton } from '@/components/OutlookButton';  // ★ 見通す機能 追加
 import {
   listMemosPaginated,
   type MapSummary,
@@ -128,6 +129,7 @@ const MapsListPage: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-2">
+            <OutlookButton />  {/* ★ 見通す機能 追加 */}
             <Button variant="default" size="sm" onClick={() => setShowNew(true)}>
               <Plus size={14} />
               新しいマップ

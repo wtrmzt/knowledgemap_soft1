@@ -24,6 +24,7 @@ from config import Config
 from models import db
 from routes import register_all_routes
 import writing_suggestion_log                              # create_all の前（モデル登録）
+import outlook_feature                                     # ← 追加: 見通す機能（モデル登録）
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -77,6 +78,7 @@ def create_app():
     register_all_routes(app)
 
     writing_suggestion_log.register_suggestion_log_routes(app) # register_all_routes(app) の後
+    outlook_feature.register_outlook_routes(app)                # ← 追加: 見通す機能ルート
 
 
     # ===========================================================

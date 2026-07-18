@@ -14,6 +14,7 @@ import ReactFlow, {
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import { Button } from '@/components/ui';
+import { OutlookSettingsPanel } from '@/components/OutlookSettingsPanel';  // ★ 見通す機能 追加
 import { isAuthenticated, isAdmin } from '@/services/authService';
 import { adminService } from '@/services';
 import type {
@@ -306,6 +307,9 @@ const SettingsPanel: React.FC = () => {
           学習者の左メモパネル下部にある「過去・未来の科目とのつながり」記述欄の表示を切り替えます。
         </p>
       </section>
+
+      {/* 見通す(関連性接続把握)設定 — 保存は本体設定と独立 ★追加 */}
+      <OutlookSettingsPanel />
 
       {/* 保存 */}
       <div className="flex items-center gap-3">
