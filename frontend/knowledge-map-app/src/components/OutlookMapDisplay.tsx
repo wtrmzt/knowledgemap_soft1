@@ -25,6 +25,8 @@ export interface OViewNode {
   kind: 'reflection' | 'subject';
   /** 科目ノード: ルート(科目名)からの距離。0=ルート。reflectionでは未使用 */
   depth?: number;
+  /** 接続(cross link)の端点かどうか。強調表示に使用 */
+  linked?: boolean;
   position: { x: number; y: number };
 }
 
@@ -62,9 +64,9 @@ function depthIndex(depth: number | undefined): number {
 // ===== カスタムノード =====
 
 const ONode: React.FC<NodeProps> = memo(({ data }) => {
-  const { label, sentence, kind, depth, highlighted } = data as {
+  const { label, sentence, kind, depth, highlighted, linked } = data as {
     label: string; sentence?: string; kind: 'reflection' | 'subject';
-    depth?: number; highlighted?: boolean;
+    depth?: number; highlighted?: boolean; linked?: boolean;
   };
 
   let style: React.CSSProperties;
@@ -75,15 +77,27 @@ const ONode: React.FC<NodeProps> = memo(({ data }) => {
       color: SUBJECT_DEPTH_FG[i],
       border: `1.5px solid ${SUBJECT_DEPTH_BORDER[i]}`,
     };
+    if (linked) {
+      // 接続先ノード: 太いアンバー枠 + 影で強調
+      style.border = '3px solid #f59e0b';
+      style.boxShadow = '0 2px 10px rgba(245, 158, 11, 0.35)';
+    } else {
+      // 接続に関与しないノードは薄く
+      style.opacity = 0.4;
+    }
   } else {
     style = {
       background: '#ffffff',
       color: '#374151',
-      border: '1.5px solid #adb5bd',
+      border: linked ? '3px solid #f59e0b' : '1.5px solid #adb5bd',
     };
+    if (linked) {
+      style.boxShadow = '0 2px 10px rgba(245, 158, 11, 0.25)';
+    }
   }
   if (highlighted) {
     style.boxShadow = HIGHLIGHT_SHADOW;
+    style.opacity = 1;
     style.zIndex = 10;
   }
 
@@ -128,6 +142,7 @@ function toFlow(
       sentence: n.sentence,
       kind: n.kind,
       depth: n.depth,
+      linked: n.linked,
       highlighted: hl.has(n.id),
     },
   }));
@@ -140,8 +155,8 @@ function toFlow(
     let style: React.CSSProperties;
     if (e.kind === 'cross') {
       style = isHl
-        ? { stroke: '#f59e0b', strokeWidth: 3 }
-        : { stroke: '#f59e0b', strokeWidth: 1.5, strokeDasharray: '6 4', opacity: 0.75 };
+        ? { stroke: '#f59e0b', strokeWidth: 4.5 }
+        : { stroke: '#f59e0b', strokeWidth: 3, opacity: 0.9 };
     } else if (e.kind === 'subject') {
       style = { stroke: '#5eead4', strokeWidth: 1.5, strokeDasharray: '5 3' };
     } else {
@@ -198,8 +213,8 @@ export const OutlookMapDisplay: React.FC<Props> = ({ nodes, edges, highlight }) 
         ...fe,
         animated: isHl,
         style: isHl
-          ? { stroke: '#f59e0b', strokeWidth: 3 }
-          : { stroke: '#f59e0b', strokeWidth: 1.5, strokeDasharray: '6 4', opacity: 0.75 },
+          ? { stroke: '#f59e0b', strokeWidth: 4.5 }
+          : { stroke: '#f59e0b', strokeWidth: 3, opacity: 0.9 },
       };
     }));
   }, [highlight, edges, setFlowNodes, setFlowEdges]);

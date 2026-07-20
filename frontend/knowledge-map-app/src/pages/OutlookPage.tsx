@@ -88,6 +88,7 @@ function buildCombinedMap(
   }
 
   // --- 科目マップを振り返りマップの右側へ平行移動
+  //     (接続先ノードは中間列へ引き寄せるため、本体はさらに右へ)
   const reflMaxX = reflNodes.length
     ? Math.max(...reflNodes.map((n) => n.position?.x ?? 0)) : 0;
   const reflMidY = reflNodes.length
@@ -96,11 +97,37 @@ function buildCombinedMap(
   const ys = laidOut.map((n) => n.position.y);
   const subjMinX = xs.length ? Math.min(...xs) : 0;
   const subjMidY = ys.length ? ys.reduce((a, b) => a + b, 0) / ys.length : 400;
-  const dx = reflMaxX + 600 - subjMinX;
+  const dx = reflMaxX + 1000 - subjMinX;
   const dy = reflMidY - subjMidY;
 
   const sentenceOf: Record<string, string> = {};
   result.subject_map.nodes.forEach((n) => { sentenceOf[n.id] = n.sentence; });
+
+  // --- 接続の端点集合と、接続先ノードの「振り返り側に寄せた」位置を計算
+  const linkedReflIds = new Set(result.links.map((lk) => lk.source_id));
+  const linkedSubjIds = new Set(result.links.map((lk) => lk.target_id));
+  const reflPosOf: Record<string, { x: number; y: number }> = {};
+  reflNodes.forEach((n) => { reflPosOf[n.id] = n.position || { x: 0, y: 0 }; });
+
+  // 接続先ノードは振り返りマップと科目マップの中間列(反射右端+450px)に配置。
+  // Y は接続元(複数あれば平均)に合わせ、重なりは最小間隔160pxで解消。
+  const pulledX = reflMaxX + 450;
+  const desired: { id: string; y: number }[] = [];
+  linkedSubjIds.forEach((tid) => {
+    const srcYs = result.links
+      .filter((lk) => lk.target_id === tid)
+      .map((lk) => reflPosOf[lk.source_id]?.y ?? reflMidY);
+    const avgY = srcYs.length ? srcYs.reduce((a, b) => a + b, 0) / srcYs.length : reflMidY;
+    desired.push({ id: tid, y: avgY });
+  });
+  desired.sort((a, b) => a.y - b.y);
+  const pulledPos: Record<string, { x: number; y: number }> = {};
+  let prevY = -Infinity;
+  desired.forEach((d) => {
+    const y = Math.max(d.y, prevY + 160);
+    pulledPos[d.id] = { x: pulledX, y };
+    prevY = y;
+  });
 
   const nodes: OViewNode[] = [
     ...reflNodes.map((n) => ({
@@ -108,6 +135,7 @@ function buildCombinedMap(
       label: n.label || n.data?.label || n.id,
       sentence: n.sentence || n.data?.sentence || '',
       kind: 'reflection' as const,
+      linked: linkedReflIds.has(n.id),
       position: n.position || { x: 0, y: 0 },
     })),
     ...result.subject_map.nodes.map((n) => ({
@@ -116,7 +144,8 @@ function buildCombinedMap(
       sentence: sentenceOf[n.id] || '',
       kind: 'subject' as const,
       depth: depthOf[n.id] ?? 2,
-      position: {
+      linked: linkedSubjIds.has(n.id),
+      position: pulledPos[n.id] || {
         x: (posOf[n.id]?.x ?? 0) + dx,
         y: (posOf[n.id]?.y ?? 0) + dy,
       },
