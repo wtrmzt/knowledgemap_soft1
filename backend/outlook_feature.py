@@ -161,6 +161,10 @@ class OutlookExplanation(db.Model):
 _OPENAI_CHAT_MODEL = "gpt-4o-mini"
 _OPENAI_EMBED_MODEL = "text-embedding-3-small"
 
+# /api/outlook/memos の既定取得件数。
+# demo_user のようにメモが大量に溜まるアカウントで一覧が重くならないよう制限する。
+OUTLOOK_MEMO_LIST_LIMIT = int(os.environ.get("OUTLOOK_MEMO_LIST_LIMIT", "50"))
+
 
 def _openai_client():
     from ai_service import _get_client
@@ -632,25 +636,54 @@ def outlook_config():
 @outlook_bp.route("/api/outlook/memos", methods=["GET"])
 @token_required
 def outlook_memos():
-    """マップを持つ自分のメモ一覧(選択画面用)。"""
+    """マップを持つ自分のメモ一覧(選択画面用)。
+
+    性能に関する注意:
+      旧実装はメモ1件ごとに KnowledgeMap を個別SELECTする N+1 構造だったため、
+      メモが多いユーザー(特に負荷テストで共有される demo_user)では
+      数百クエリが発生し数十秒かかっていた。
+      現在は JOIN 1クエリ + 件数上限で取得する。
+
+      node_count は Memo.node_count 列(v3追加)を優先し、
+      未設定(0/None)の場合のみマップJSONから数える。
+      マップJSONの転送量が支配的になるため、取得件数は上限で制限する。
+    """
     if not _feature_enabled():
         return _disabled_response()
     user = _current_user_row()
     if user is None:
         return jsonify({"error": "user not found"}), 404
-    memos = (Memo.query.filter_by(user_id=user.id)
-             .order_by(Memo.created_at.desc()).all())
+
+    # 一覧の取得件数上限(?limit= で変更可。既定50・最大200)
+    try:
+        limit = int(request.args.get("limit", OUTLOOK_MEMO_LIST_LIMIT))
+    except (TypeError, ValueError):
+        limit = OUTLOOK_MEMO_LIST_LIMIT
+    limit = min(max(limit, 1), 200)
+
+    q = (db.session.query(Memo, KnowledgeMap)
+         .join(KnowledgeMap, KnowledgeMap.memo_id == Memo.id)
+         .filter(Memo.user_id == user.id))
+
+    # is_archived はv3追加列。存在しない環境でも動くよう防御的に適用
+    archived_col = getattr(Memo, "is_archived", None)
+    if archived_col is not None:
+        q = q.filter(db.or_(archived_col.is_(False), archived_col.is_(None)))
+
+    rows = q.order_by(Memo.created_at.desc()).limit(limit).all()
+
     result = []
-    for m in memos:
-        if getattr(m, "is_archived", False):
+    for m, km in rows:
+        nodes = km.nodes or []
+        if not nodes:
             continue
-        km = KnowledgeMap.query.filter_by(memo_id=m.id).first()
-        if km is None or not (km.nodes or []):
-            continue
-        node_count = len([n for n in km.nodes
-                          if isinstance(n, dict)
-                          and not (n.get("data") or {}).get("isSatellite")
-                          and not (n.get("data") or {}).get("isRelation")])
+        # 事前集計列があればそれを使い、JSON走査を避ける
+        node_count = getattr(m, "node_count", 0) or 0
+        if not node_count:
+            node_count = len([n for n in nodes
+                              if isinstance(n, dict)
+                              and not (n.get("data") or {}).get("isSatellite")
+                              and not (n.get("data") or {}).get("isRelation")])
         result.append({
             "memo_id": m.id,
             "title": getattr(m, "title", None) or "",
@@ -661,7 +694,7 @@ def outlook_memos():
             "created_at": m.created_at.isoformat() if m.created_at else None,
             "updated_at": m.updated_at.isoformat() if getattr(m, "updated_at", None) else None,
         })
-    return jsonify({"memos": result})
+    return jsonify({"memos": result, "limit": limit})
 
 
 @outlook_bp.route("/api/outlook/subjects", methods=["POST"])
