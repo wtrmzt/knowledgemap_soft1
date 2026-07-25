@@ -10,7 +10,7 @@
  *   - handleCreateBlankMemo (新しいマップボタン用、二重実行ガード付き)
  *   - loadExistingMemo (マップ一覧から既存マップを開く)
  */
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   isAuthenticated, isAdmin, logout, getCurrentUserId,
@@ -26,6 +26,7 @@ import type {
   RelationSubGraphCache, PublicSettings, EnabledModes, InterventionLevels,
 } from '@/types';
 import { FLOW_PHASE_ORDER } from '@/types';
+import type { EdgeHighlight } from '@/services/mapService';
 
 const DEFAULT_SETTINGS: PublicSettings = {
   enabled_modes: { reflection: true, research: true, idea: true },
@@ -1260,6 +1261,55 @@ export function useDashboard() {
 
   const handleLogout = useCallback(() => { logout(); navigate('/login'); }, [navigate]);
 
+  // ★★★ 機能2（新仕様）: 関連性の高い上位3エッジを自動取得 ★★★
+  //   初期マップ作成時・既存マップのロード時にも自動で出す。
+  //   依存を「エッジ構成のシグネチャ(文字列)」にすることで、無関係な再レンダリングで
+  //   デバウンスが無限にリセットされる不具合を防ぐ。
+  const [edgeHighlights, setEdgeHighlights] = useState<EdgeHighlight[]>([]);
+  const [edgeHighlightsLoading, setEdgeHighlightsLoading] = useState(false);
+  const edgeHlTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // 通常エッジ（周辺概念・関連科目を除く）の構成シグネチャ
+  const edgeSignature = useMemo(() => {
+    const realEdges = edges.filter((e) => !e.isSatellite && !e.isRelation);
+    if (realEdges.length === 0) return '';
+    return realEdges
+      .map((e) => `${e.source}>${e.target}:${e.label || ''}`)
+      .sort()
+      .join('|');
+  }, [edges]);
+
+  const edgeLevel = settings.intervention.edge_explanation;
+
+  useEffect(() => {
+    if (edgeHlTimerRef.current) clearTimeout(edgeHlTimerRef.current);
+
+    // Lv1(OFF) / エッジ無しなら消す
+    if (edgeLevel <= 1 || !edgeSignature) {
+      setEdgeHighlights([]);
+      setEdgeHighlightsLoading(false);
+      return;
+    }
+
+    // 待機中もパネルを出す（「分析しています…」表示）
+    setEdgeHighlightsLoading(true);
+    edgeHlTimerRef.current = setTimeout(async () => {
+      try {
+        const r = await mapService.getEdgeHighlights(
+          memoRef.current?.id, nodesRef.current, edgesRef.current,
+        );
+        setEdgeHighlights(r?.disabled ? [] : (r?.highlights || []));
+      } catch (e) {
+        console.error('エッジ説明の取得エラー:', e);
+        setEdgeHighlights([]);
+      } finally {
+        setEdgeHighlightsLoading(false);
+      }
+    }, 1200);
+
+    return () => { if (edgeHlTimerRef.current) clearTimeout(edgeHlTimerRef.current); };
+  }, [edgeSignature, edgeLevel]);
+
   const realNodeCount = nodes.filter((n) => !n.data?.isSatellite && !n.data?.isRelation).length;
 
   // ★ 提案カードが採用（クリックで挿入）されたときにDB記録（研究データ）
@@ -1307,6 +1357,7 @@ export function useDashboard() {
 
     // ★★★ 機能2,3: エッジ説明レベル / 記述項目 ★★★
     edgeExplanationLevel: settings.intervention.edge_explanation,
+    edgeHighlights, edgeHighlightsLoading,
     showRelationNote: settings.features?.relation_note ?? true,
     relationNote,
     handleRelationNoteChange,

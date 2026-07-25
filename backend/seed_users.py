@@ -12,6 +12,7 @@
 
 2) CSV から登録（列: user_id[,password][,is_admin]）
     python seed_users.py --csv users.csv
+    credentials_20260630_110659.csv
    CSV 例:
        user_id,password,is_admin
        subject01,,false        # password 空欄なら自動生成

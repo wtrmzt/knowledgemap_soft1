@@ -106,3 +106,41 @@ export async function getEdgeExplanation(
     target_label: targetLabel,
   });
 }
+// ===== 機能2（新仕様）: マップ全体から関連性の高い上位エッジを取得 =====
+//   ノード＋エッジをAIに渡し、上位3件の「つながり」と説明を取得する。
+//   介入度 Lv1 は disabled、Lv2 は word のみ、Lv3 は sentence まで返る。
+export interface EdgeHighlight {
+  source_label: string;
+  target_label: string;
+  word: string;
+  sentence: string;
+}
+
+export interface EdgeHighlightsResult {
+  level?: number;
+  highlights: EdgeHighlight[];
+  cached?: boolean;
+  disabled?: boolean;
+}
+
+export async function getEdgeHighlights(
+  memoId: number | null | undefined,
+  nodes: MapNode[],
+  edges: MapEdge[],
+): Promise<EdgeHighlightsResult> {
+  return apiPost<EdgeHighlightsResult>('/edges/highlights', {
+    memo_id: memoId ?? null,
+    // 送信量を抑えるため必要な項目のみ送る
+    nodes: nodes.map((n) => ({
+      id: n.id,
+      label: n.label || n.data?.label || '',
+    })),
+    edges: edges.map((e) => ({
+      source: e.source,
+      target: e.target,
+      label: e.label || '',
+      isSatellite: e.isSatellite || false,
+      isRelation: e.isRelation || false,
+    })),
+  });
+}

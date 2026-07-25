@@ -11,13 +11,11 @@ import ReactFlow, {
   Controls, Background, MiniMap,
   useNodesState, useEdgesState, addEdge,
   type Connection, type Edge, type Node,
-  BackgroundVariant, type NodeTypes, type EdgeTypes,
+  BackgroundVariant, type NodeTypes,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import CustomNode from './CustomNode';
-import ExplainEdge from './ExplainEdge';
 import { EdgeLabelDialog } from './EdgeLabelDialog';
-import { mapService } from '@/services';
 import { toFlowNodes, toFlowEdges, fromFlowNodes, fromFlowEdges, generateId } from '@/utils';
 import type { MapNode, MapEdge, NodeStatus, SurroundingConceptsMap } from '@/types';
 
@@ -31,8 +29,6 @@ interface Props {
   onConnect: (source: string, target: string, label: string) => void;
   onAutoSave: () => void;
   onSatelliteAdd: (nodeId: string) => void;
-  /** 機能2: エッジ説明の介入度（1:OFF / 2:単語 / 3:説明文） */
-  edgeExplanationLevel?: number;
 }
 
 function buildPosMap(nodes: MapNode[] | Node[]): Record<string, { x: number; y: number }> {
@@ -46,35 +42,9 @@ export const KnowledgeMapDisplay: React.FC<Props> = ({
   nodeStatuses, surroundingConcepts,
   onNodesChange: setMapNodes, onEdgesChange: setMapEdges,
   onConnect: onExtConnect, onAutoSave, onSatelliteAdd,
-  edgeExplanationLevel = 3,
 }) => {
   const nodeTypes: NodeTypes = useMemo(() => ({ custom: CustomNode }), []);
-  const edgeTypes: EdgeTypes = useMemo(() => ({ explain: ExplainEdge }), []);
-
-  // 安定参照（毎回作り直すとエッジが再生成され、ポップオーバーの状態が失われる）
-  const fetchEdgeExplanation = useCallback(
-    (s: string, t: string) => mapService.getEdgeExplanation(s, t), []);
-
-  // 機能2: 対象エッジ（周辺概念の点線でない通常エッジ）にアイコンを付与
-  const decorateEdges = useCallback((eds: Edge[], srcNodes: MapNode[]): Edge[] => {
-    if (edgeExplanationLevel <= 1) return eds;
-    const labelOf: Record<string, string> = {};
-    srcNodes.forEach((n) => { labelOf[n.id] = n.label || n.data?.label || ''; });
-    return eds.map((e) => {
-      if ((e.data as any)?.isSatellite || (e as any).isSatellite) return e;
-      return {
-        ...e,
-        type: 'explain',
-        data: {
-          ...(e.data || {}),
-          explLevel: edgeExplanationLevel,
-          sourceLabel: labelOf[e.source] || '',
-          targetLabel: labelOf[e.target] || '',
-          fetchExplanation: fetchEdgeExplanation,
-        },
-      };
-    });
-  }, [edgeExplanationLevel, fetchEdgeExplanation]);
+  // ※ 機能2は「エッジ上のアイコン方式」を廃止し、画面下部の EdgeHighlightsPanel に移行した。
 
   // 初回レンダリング用のエッジ（ハンドル計算済み）
   const initPosMap = useMemo(() => buildPosMap(mapNodes), [mapNodes]);
@@ -82,7 +52,7 @@ export const KnowledgeMapDisplay: React.FC<Props> = ({
     toFlowNodes(mapNodes, nodeStatuses, surroundingConcepts),
   );
   const [flowEdges, setFlowEdges, onEChange] = useEdgesState(
-    decorateEdges(toFlowEdges(mapEdges, initPosMap), mapNodes),
+    toFlowEdges(mapEdges, initPosMap),
   );
 
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -122,8 +92,8 @@ export const KnowledgeMapDisplay: React.FC<Props> = ({
   // ===== 外部エッジ更新（ハンドル計算込み） =====
   useEffect(() => {
     const pm = buildPosMap(mapNodes);
-    setFlowEdges(decorateEdges(toFlowEdges(mapEdges, pm), mapNodes));
-  }, [mapEdges, mapNodes, setFlowEdges, decorateEdges]);
+    setFlowEdges(toFlowEdges(mapEdges, pm));
+  }, [mapEdges, mapNodes, setFlowEdges]);
 
   // ===== satellite-add-to-map =====
   useEffect(() => {
@@ -134,6 +104,55 @@ export const KnowledgeMapDisplay: React.FC<Props> = ({
     document.addEventListener('satellite-add-to-map', handler);
     return () => document.removeEventListener('satellite-add-to-map', handler);
   }, [onSatelliteAdd]);
+
+  // ===== ★ FB2: つながりのフォーカス（該当ノード・エッジを発光）=====
+  const hlTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    const labelOf = (id: string) => {
+      const n = mapNodesRef.current.find((m) => m.id === id);
+      return n?.label || n?.data?.label || '';
+    };
+    const clear = () => {
+      setFlowNodes((nds) => nds.map((n) =>
+        (n.data as any)?._hl ? { ...n, data: { ...n.data, _hl: false } } : n));
+      setFlowEdges((eds) => eds.map((e) =>
+        (e.data as any)?._hl
+          ? { ...e, animated: false, style: undefined, data: { ...e.data, _hl: false } }
+          : e));
+    };
+    const onFocus = (ev: Event) => {
+      const { source, target } = (ev as CustomEvent).detail || {};
+      if (!source || !target) return;
+      const focusLabels = new Set([source, target]);
+
+      setFlowNodes((nds) => nds.map((n) => {
+        const lb = n.data?.label || '';
+        const hit = focusLabels.has(lb);
+        return { ...n, data: { ...n.data, _hl: hit } };
+      }));
+
+      setFlowEdges((eds) => eds.map((e) => {
+        const s = labelOf(e.source);
+        const t = labelOf(e.target);
+        const hit = (s === source && t === target) || (s === target && t === source);
+        return hit
+          ? {
+              ...e, animated: true,
+              style: { stroke: '#7c3aed', strokeWidth: 3 },
+              data: { ...e.data, _hl: true },
+            }
+          : { ...e, animated: false, style: undefined, data: { ...(e.data || {}), _hl: false } };
+      }));
+
+      if (hlTimerRef.current) clearTimeout(hlTimerRef.current);
+      hlTimerRef.current = setTimeout(clear, 3000); // 3秒で解除
+    };
+    document.addEventListener('edge-highlight-focus', onFocus);
+    return () => {
+      document.removeEventListener('edge-highlight-focus', onFocus);
+      if (hlTimerRef.current) clearTimeout(hlTimerRef.current);
+    };
+  }, [setFlowNodes, setFlowEdges]);
 
   // ===== 自動保存デバウンス =====
   const schedule = useCallback(() => {
@@ -277,7 +296,6 @@ export const KnowledgeMapDisplay: React.FC<Props> = ({
         zoomOnDoubleClick={false}
         elevateNodesOnSelect
         nodeTypes={nodeTypes}
-        edgeTypes={edgeTypes}
         fitView fitViewOptions={{ padding: 0.3 }}
         minZoom={0.2} maxZoom={2}
         proOptions={{ hideAttribution: true }}

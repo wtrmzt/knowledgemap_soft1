@@ -228,7 +228,9 @@ const CustomNode: React.FC<NodeProps<MapNodeData>> = ({ data, selected, id, xPos
             : (isDashed ? `2px dashed ${border}` : `2px solid ${border}`),
           borderRadius: isDashed ? 20 : 14,
           cursor: 'pointer',
-          boxShadow: GLOW[status] ?? '0 1px 4px rgba(0,0,0,.06)',
+          boxShadow: (data as any)._hl
+            ? '0 0 0 4px rgba(124,58,237,.35), 0 4px 16px rgba(124,58,237,.30)'
+            : (GLOW[status] ?? '0 1px 4px rgba(0,0,0,.06)'),
           transition: 'border-color .3s ease, box-shadow .3s ease',
           opacity: isSat ? 0.85 : isCandidate ? 0.9 : isRelExpanded ? 0.92 : 1,
         } as React.CSSProperties}

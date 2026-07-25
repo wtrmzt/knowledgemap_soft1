@@ -28,7 +28,10 @@ import outlook_feature                                     # ← 追加: 見通�
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
+try:
+    import edge_highlight            # エッジ説明の新仕様（上位3件の提示ログ）
+except Exception:
+    edge_highlight = None
 
 
 
@@ -79,6 +82,10 @@ def create_app():
 
     writing_suggestion_log.register_suggestion_log_routes(app) # register_all_routes(app) の後
     outlook_feature.register_outlook_routes(app)                # ← 追加: 見通す機能ルート
+
+    # --- エッジ説明の新仕様: POST /api/edges/highlights を登録（未導入なら自動スキップ）---
+    if edge_highlight is not None:
+        edge_highlight.register_edge_highlight_routes(app)
 
 
     # ===========================================================

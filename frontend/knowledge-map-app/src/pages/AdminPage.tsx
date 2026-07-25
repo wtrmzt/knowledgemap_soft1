@@ -113,11 +113,11 @@ const FEATURE_META: {
   },
   {
     key: 'edge_explanation',
-    title: 'エッジの説明（アイコン＋ポップオーバー）',
+    title: 'エッジの説明（下部ポップアップで上位3件を自動提示）',
     levels: {
-      1: 'Lv1 OFF：エッジにアイコンを表示しない。',
-      2: 'Lv2 単語のみ：吹き出しに関係を表す短い語句のみ表示。',
-      3: 'Lv3 説明文：吹き出しに2概念の関係の説明文を表示（フル）。',
+      1: 'Lv1 OFF：ポップアップを表示しない。',
+      2: 'Lv2 単語のみ：関係を表す短い語句のみ表示。',
+      3: 'Lv3 説明文：2概念の関係の説明文まで表示（フル）。',
     },
   },
 ];
@@ -274,7 +274,7 @@ const SettingsPanel: React.FC = () => {
                 prompts: { ...settings.prompts, edge_explanation: e.target.value },
               })}
               rows={4}
-              placeholder="（例）2つの概念の因果関係や順序に注目して説明してください。"
+              placeholder="（例）因果関係や前提となる順序に注目して、上位のつながりを選んでください。"
               className="mt-1 w-full text-xs rounded-lg border border-surface-200 px-3 py-2 focus:outline-none focus:ring-1 focus:ring-primary-400"
             />
           </div>

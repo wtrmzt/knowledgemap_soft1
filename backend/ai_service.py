@@ -38,6 +38,38 @@ def _get_client():
 
 
 # =============================================
+# 管理者によるプロンプト上書き（管理者機能D）
+# =============================================
+
+def _get_prompt_overrides() -> dict:
+    """
+    管理者が設定したプロンプト追記（AppSettings.prompts）を取得する。
+
+    キー: map_generation / surrounding / edge_explanation
+    空文字なら既定プロンプトのみを使用する。
+    AppSettings 未導入・DB未接続などの環境でも落ちないよう防御的に扱う。
+    """
+    try:
+        from models import AppSettings
+    except Exception:
+        return {}
+    if AppSettings is None:
+        return {}
+    try:
+        return AppSettings.get_data().get("prompts") or {}
+    except Exception:
+        return {}
+
+
+def _apply_override(base_prompt: str, key: str) -> str:
+    """既定プロンプトに管理者の追加指示を連結する（未設定ならそのまま返す）。"""
+    extra = str(_get_prompt_overrides().get(key) or "").strip()
+    if not extra:
+        return base_prompt
+    return f"{base_prompt}\n\n【管理者による追加指示】\n{extra}"
+
+
+# =============================================
 # モード別プロンプト
 # =============================================
 
@@ -91,6 +123,7 @@ def generate_map_from_text(text: str, mode: str = "reflection") -> dict:
     system_prompt = _MODE_SYSTEM_PROMPTS.get(
         mode, "知識マップをJSON形式で生成してください。"
     )
+    system_prompt = _apply_override(system_prompt, "map_generation")
     try:
         client = _get_client()
         response = client.chat.completions.create(
@@ -172,6 +205,7 @@ def generate_surrounding_concepts(nodes: list) -> dict:
         "以下のJSON形式で出力してください:\n"
         '{"概念名1":[{"label":"周辺概念A","relation":"140字以内の説明"}],"概念名2":[...]}'
     )
+    prompt = _apply_override(prompt, "surrounding")
     try:
         client = _get_client()
         response = client.chat.completions.create(
@@ -186,6 +220,46 @@ def generate_surrounding_concepts(nodes: list) -> dict:
     except Exception as e:
         logger.error("[generate_surrounding_concepts] エラー: %s", e)
         return {}
+
+
+# =============================================
+# エッジ（2概念のつながり）の説明
+#   ※ 新仕様の「上位3件を画面下部に自動提示」は edge_highlight.py が担当する。
+#      本関数は旧エンドポイント /api/edges/explain（単一ペアの説明）用に維持。
+# =============================================
+
+def generate_edge_explanation(source_label: str, target_label: str) -> dict:
+    """2概念のつながりを説明する。 -> {"word": 関係を表す語, "sentence": 説明文}"""
+    if not source_label or not target_label:
+        return {"word": "", "sentence": ""}
+
+    prompt = (
+        "あなたは学習支援AIです。\n"
+        f"「{source_label}」と「{target_label}」という2つの概念のつながりを説明してください。\n\n"
+        "【出力条件】\n"
+        "・word: 2概念の関係を一言で表す語（10文字以内。例「前提条件」「因果関係」「具体例」）\n"
+        "・sentence: なぜこの2つが関係するのかの説明（60〜100字程度、丁寧語）\n\n"
+        "厳密にJSON形式のみで出力してください:\n"
+        '{"word":"前提条件","sentence":"…"}'
+    )
+    prompt = _apply_override(prompt, "edge_explanation")
+
+    try:
+        client = _get_client()
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3,
+            response_format={"type": "json_object"},
+        )
+        result = json.loads(response.choices[0].message.content)
+        return {
+            "word": str(result.get("word") or "")[:300],
+            "sentence": str(result.get("sentence") or ""),
+        }
+    except Exception as e:
+        logger.error("[generate_edge_explanation] エラー: %s", e)
+        return {"word": "", "sentence": ""}
 
 
 # =============================================

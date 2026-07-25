@@ -21,6 +21,7 @@ import { OutlookButton } from '@/components/OutlookButton';  // ★ 見通す機
 import { useDashboard } from '@/hooks/useDashboard';
 import { HelpTutorial, shouldAutoOpenTutorial } from '@/components/HelpTutorial';
 import { HelpOverlay } from '@/components/HelpOverlay';
+import { EdgeHighlightsPanel } from '@/components/EdgeHighlightsPanel';
 import { FLOW_PHASE_LABELS } from '@/types';
 
 const CURRENT_MEMO_KEY = 'kmap_current_memo';
@@ -329,7 +330,19 @@ const DashboardPage: React.FC = () => {
               onNodesChange={d.setNodes} onEdgesChange={d.setEdges}
               onConnect={d.handleConnect} onAutoSave={d.handleAutoSave}
               onSatelliteAdd={d.handleSatelliteAdd}
-              edgeExplanationLevel={d.edgeExplanationLevel}
+            />
+          )}
+
+          {/* ★ 機能2（新仕様）: 関連性の高い上位エッジを画面下部に自動提示 */}
+          {d.nodes.length > 0 && (
+            <EdgeHighlightsPanel
+              highlights={d.edgeHighlights}
+              level={d.edgeExplanationLevel}
+              loading={d.edgeHighlightsLoading}
+              nodeLabels={d.nodes
+                .filter((n) => !n.data?.isSatellite && !n.data?.isRelation)
+                .map((n) => n.label || n.data?.label || '')
+                .filter(Boolean)}
             />
           )}
 
