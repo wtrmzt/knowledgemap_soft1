@@ -25,6 +25,7 @@ def register_map_routes(app: Flask):
         body = request.get_json() or {}
         source = (body.get("source_label") or "").strip()
         target = (body.get("target_label") or "").strip()
+        memo_id = body.get("memo_id")  # 任意（研究用にどのメモで生成されたか記録）
         if not source or not target:
             return jsonify({"error": "source_label と target_label は必須です"}), 400
 
@@ -65,6 +66,12 @@ def register_map_routes(app: Flask):
                     source_label=source, target_label=target,
                     word=gen.get("word", ""), sentence=gen.get("sentence", ""),
                 )
+                # memo_id 列がある環境でのみ設定（旧スキーマでも壊れないように）
+                if hasattr(EdgeExplanation, "memo_id") and memo_id is not None:
+                    try:
+                        row.memo_id = int(memo_id)
+                    except (TypeError, ValueError):
+                        pass
                 db.session.add(row)
                 db.session.commit()
             except Exception:

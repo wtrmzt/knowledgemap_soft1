@@ -171,17 +171,23 @@ def _cached_explanation(source, target):
         return None
 
 
-def _store_explanation(source, target, word, sentence):
+def _store_explanation(source, target, word, sentence, memo_id=None):
     """個別ペアの説明を edge_explanations に保存（既存があれば何もしない）"""
     if EdgeExplanation is None:
         return
     try:
         if _cached_explanation(source, target) is not None:
             return
-        db.session.add(EdgeExplanation(
+        row = EdgeExplanation(
             source_label=source, target_label=target,
             word=word or "", sentence=sentence or "",
-        ))
+        )
+        if hasattr(EdgeExplanation, "memo_id") and memo_id is not None:
+            try:
+                row.memo_id = int(memo_id)
+            except (TypeError, ValueError):
+                pass
+        db.session.add(row)
         db.session.commit()
     except Exception:
         db.session.rollback()
@@ -342,7 +348,7 @@ def register_edge_highlight_routes(app):
             rows = []
             for i, h in enumerate(selected):
                 _store_explanation(h["source_label"], h["target_label"],
-                                   h["word"], h["sentence"])
+                                   h["word"], h["sentence"], memo_id=memo_id)
                 rows.append(EdgeHighlightLog(
                     user_id=user_id,
                     memo_id=memo_id,

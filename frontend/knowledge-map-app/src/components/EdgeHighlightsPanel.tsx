@@ -25,6 +25,8 @@ interface Props {
   loading?: boolean;
   /** 手動生成タブ用: 選択できるノードのラベル一覧 */
   nodeLabels?: string[];
+  /** 現在のメモID（手動生成の記録用） */
+  memoId?: number | null;
 }
 
 /** 該当ノード・エッジをマップ上で光らせる */
@@ -77,7 +79,7 @@ const HighlightCard: React.FC<{ h: EdgeHighlight; level: number }> = ({ h, level
   );
 };
 
-const ManualTab: React.FC<{ nodeLabels: string[] }> = ({ nodeLabels }) => {
+const ManualTab: React.FC<{ nodeLabels: string[]; memoId?: number | null }> = ({ nodeLabels, memoId }) => {
   const [a, setA] = useState('');
   const [b, setB] = useState('');
   const [loading, setLoading] = useState(false);
@@ -90,7 +92,7 @@ const ManualTab: React.FC<{ nodeLabels: string[] }> = ({ nodeLabels }) => {
     if (!canRun) return;
     setLoading(true); setError(null); setResult(null);
     try {
-      const r = await getEdgeExplanation(a, b);
+      const r = await getEdgeExplanation(a, b, memoId);
       if (r?.disabled) setError('この機能は現在オフです');
       else setResult({ word: r?.word || '', sentence: r?.sentence || '' });
       focusOnMap(a, b);
@@ -160,7 +162,7 @@ const ManualTab: React.FC<{ nodeLabels: string[] }> = ({ nodeLabels }) => {
 };
 
 export const EdgeHighlightsPanel: React.FC<Props> = ({
-  highlights, level, loading = false, nodeLabels = [],
+  highlights, level, loading = false, nodeLabels = [], memoId = null,
 }) => {
   const [collapsed, setCollapsed] = useState(false);
   const [tab, setTab] = useState<'top' | 'manual'>('top');
@@ -235,7 +237,7 @@ export const EdgeHighlightsPanel: React.FC<Props> = ({
                   </div>
                 )
               ) : (
-                <ManualTab nodeLabels={nodeLabels} />
+                <ManualTab nodeLabels={nodeLabels} memoId={memoId} />
               )}
             </div>
           </>

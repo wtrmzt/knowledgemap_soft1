@@ -100,10 +100,12 @@ export interface EdgeExplanationResult {
 export async function getEdgeExplanation(
   sourceLabel: string,
   targetLabel: string,
+  memoId?: number | null,
 ): Promise<EdgeExplanationResult> {
   return apiPost<EdgeExplanationResult>('/edges/explain', {
     source_label: sourceLabel,
     target_label: targetLabel,
+    memo_id: memoId ?? null,
   });
 }
 // ===== 機能2（新仕様）: マップ全体から関連性の高い上位エッジを取得 =====

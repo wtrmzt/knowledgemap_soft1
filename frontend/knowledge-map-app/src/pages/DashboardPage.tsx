@@ -343,6 +343,7 @@ const DashboardPage: React.FC = () => {
                 .filter((n) => !n.data?.isSatellite && !n.data?.isRelation)
                 .map((n) => n.label || n.data?.label || '')
                 .filter(Boolean)}
+              memoId={d.currentMemo?.id ?? null}
             />
           )}
 

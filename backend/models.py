@@ -301,6 +301,9 @@ class EdgeExplanation(db.Model):
     target_label = db.Column(db.String(300), nullable=False, index=True)
     word = db.Column(db.String(300), default="")       # Lv2: 単語のみ
     sentence = db.Column(db.Text, default="")          # Lv3: 説明文
+    # このペアの説明が生成された際のメモID（研究用・任意）。
+    # キャッシュ再利用時は最初に生成したメモIDを保持する。
+    memo_id = db.Column(db.Integer, nullable=True, index=True)
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
 
     __table_args__ = (
@@ -313,4 +316,5 @@ class EdgeExplanation(db.Model):
             "target_label": self.target_label,
             "word": self.word or "",
             "sentence": self.sentence or "",
+            "memo_id": self.memo_id,
         }
